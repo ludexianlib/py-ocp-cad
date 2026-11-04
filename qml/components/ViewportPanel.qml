@@ -81,35 +81,61 @@ Card {
             }
         }
 
-        Rectangle {
+        Item {
+            id: preview_container
+            objectName: "preview_container"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: 15
-            color: "#fbfaff"
-            border.color: "#f0edf8"
-            clip: true
-            OcctViewport {
-                id: native_view
-                objectName: "occt_viewport"
-                anchors.fill: parent
-                anchors.margins: 8
-                controller: root.cad_controller
-                view_mode: root.view_mode
-                onOrbit_started: root.view_mode = "free"
+            // Layered translucent outlines keep the shadow soft without an
+            // effects plugin. Eight overlapping layers reach about 6% opacity.
+            Repeater {
+                model: 8
+                delegate: Rectangle {
+                    required property int index
+                    readonly property real spread: (index + 1) * 1.25
+                    x: -spread
+                    y: 3 - spread
+                    width: preview_container.width + spread * 2
+                    height: preview_container.height + spread * 2
+                    radius: 15 + spread
+                    color: Theme.sidebar
+                    opacity: 0.008
+                    antialiasing: true
+                }
             }
-            Label { anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 15; text: "3D PREVIEW"; font.pixelSize: 8; font.letterSpacing: 1.8; color: "#aaa1bd" }
-            Label { anchors.bottom: parent.bottom; anchors.right: parent.right; anchors.margins: 13; text: "单位 · mm"; font.pixelSize: 9; color: "#a79eb8" }
-            Label {
-                anchors.centerIn: parent
-                width: parent.width - 48
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                opacity: !native_view.render_ready || !root.has_model ? 1 : 0
-                visible: opacity > 0.001
-                text: native_view.error_text || (!native_view.render_ready ? "正在加载三维预览…" : "创建一个模型，开始预览")
-                font.pixelSize: 12
-                color: native_view.error_text ? Theme.error : Theme.muted
-                Behavior on opacity { NumberAnimation { duration: 180 } }
+            Rectangle {
+                objectName: "preview_surface"
+                anchors.fill: parent
+                radius: 15
+                gradient: Gradient {
+                    GradientStop { position: 0; color: "#ebe7fa" }
+                    GradientStop { position: 1; color: "#f5f8fc" }
+                }
+                border.color: "#dce3ee"
+                clip: true
+                OcctViewport {
+                    id: native_view
+                    objectName: "occt_viewport"
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    controller: root.cad_controller
+                    view_mode: root.view_mode
+                    onOrbit_started: root.view_mode = "free"
+                }
+                Label { anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 15; text: "3D PREVIEW"; font.pixelSize: 8; font.letterSpacing: 1.8; color: "#64748b" }
+                Label { anchors.bottom: parent.bottom; anchors.right: parent.right; anchors.margins: 13; text: "单位 · mm"; font.pixelSize: 9; color: "#718096" }
+                Label {
+                    anchors.centerIn: parent
+                    width: parent.width - 48
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    opacity: !native_view.render_ready || !root.has_model ? 1 : 0
+                    visible: opacity > 0.001
+                    text: native_view.error_text || (!native_view.render_ready ? "正在加载三维预览…" : "创建一个模型，开始预览")
+                    font.pixelSize: 12
+                    color: native_view.error_text ? "#84253b" : Theme.ink
+                    Behavior on opacity { NumberAnimation { duration: 180 } }
+                }
             }
         }
         RowLayout {

@@ -11,7 +11,7 @@ from PyQt6.QtOpenGL import QOpenGLFunctions_4_1_Core
 from PyQt6.QtQuick import QQuickFramebufferObject
 
 from OCP.AIS import AIS_DisplayMode, AIS_InteractiveContext, AIS_SelectionScheme, AIS_Shape
-from OCP.Aspect import Aspect_DisplayConnection, Aspect_NeutralWindow
+from OCP.Aspect import Aspect_DisplayConnection, Aspect_GradientFillMethod, Aspect_NeutralWindow
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
 from OCP.OpenGl import OpenGl_Context, OpenGl_FrameBuffer, OpenGl_GraphicDriver
 from OCP.Quantity import Quantity_Color, Quantity_TypeOfColor
@@ -139,14 +139,20 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         self._gl_context = self._view.View().GlWindow().GetGlContext()
         if self._gl_context is None:
             raise RuntimeError("OCCT 渲染上下文创建失败。")
-        self._view.SetBackgroundColor(self._color(251, 250, 255))
+        # QML hex colors are sRGB; convert them before OCCT's linear rendering.
+        self._view.SetBgGradientColors(
+            self._color(235, 231, 250, Quantity_TypeOfColor.Quantity_TOC_sRGB),
+            self._color(245, 248, 252, Quantity_TypeOfColor.Quantity_TOC_sRGB),
+            Aspect_GradientFillMethod.Aspect_GradientFillMethod_Vertical,
+            False,
+        )
         self._wrapped_fbo = OpenGl_FrameBuffer()
         self._bind_framebuffer(0x8D40, framebuffer_id)
         logging.getLogger(__name__).info("OCCT view initialized, framebuffer=%s size=%s", framebuffer_id, size)
 
     @staticmethod
-    def _color(red, green, blue):
-        return Quantity_Color(red / 255.0, green / 255.0, blue / 255.0, Quantity_TypeOfColor.Quantity_TOC_RGB)
+    def _color(red, green, blue, color_type=Quantity_TypeOfColor.Quantity_TOC_RGB):
+        return Quantity_Color(red / 255.0, green / 255.0, blue / 255.0, color_type)
 
     def _wrap_framebuffer(self, size):
         if not self._wrapped_fbo.InitWrapper(self._gl_context):
