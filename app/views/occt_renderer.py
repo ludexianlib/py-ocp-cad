@@ -19,14 +19,17 @@ from OCP.V3d import V3d_TypeOfOrientation, V3d_Viewer
 
 
 class OcctRenderer(QQuickFramebufferObject.Renderer):
-    def __init__(self, report_result):
+    def __init__(self, report_result, report_shape):
         super().__init__()
         self._report_result = report_result
+        self._report_shape = report_shape
         self._quick_window = None
         self._release_callback = None
         self._window_id = 0
         self._pixel_ratio = 1.0
         self._shape = None
+        self._prepared_shape = None
+        self._notified_shape = None
         self._displayed_shape = None
         self._view_mode = "iso"
         self._commands = []
@@ -62,7 +65,10 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         if window is not None:
             self._window_id = int(window.winId())
             self._pixel_ratio = window.devicePixelRatio()
+        if self._shape is not item._shape:
+            self._failed = False
         self._shape = item._shape
+        self._prepared_shape = item._display_shape
         self._view_mode = item._view_mode
         self._commands.extend(item._pending_commands)
         item._pending_commands.clear()
@@ -199,8 +205,12 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         if self._shape is not None and not self._shape.IsNull():
             # AIS triangulates its input. Give it a view-owned copy so rendering
             # and STEP export never modify/read the same triangulation in parallel.
-            display_shape = BRepBuilderAPI_Copy(self._shape, True, False).Shape()
+            display_shape = self._prepared_shape
+            if display_shape is None:
+                display_shape = BRepBuilderAPI_Copy(self._shape, True, False).Shape()
             self._presentation = AIS_Shape(display_shape)
+            if self._prepared_shape is not None:
+                self._presentation.Attributes().SetAutoTriangulation(False)
             self._presentation.SetColor(self._color(128, 105, 206))
             self._presentation.Attributes().SetFaceBoundaryDraw(True)
             self._context.Display(self._presentation, AIS_DisplayMode.AIS_Shaded, 0, False)
@@ -258,14 +268,20 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             self._update_shape()
             self._apply_commands()
             self._view.Redraw()
+            if self._notified_shape is not self._displayed_shape:
+                self._notified_shape = self._displayed_shape
+                self._report_shape(self._displayed_shape, "")
             if not self._ready_reported:
                 self._ready_reported = True
                 self._report_result(True, "")
                 logging.getLogger(__name__).info("OCCT first frame rendered")
         except Exception as error:
             self._failed = True
+            self._ready_reported = False
             logging.getLogger(__name__).exception("OCCT viewport rendering failed")
-            self._report_result(False, "三维预览加载失败：" + str(error))
+            error_text = "三维预览加载失败：" + str(error)
+            self._report_result(False, error_text)
+            self._report_shape(self._shape, error_text)
         finally:
             if self._functions is not None and self._bind_vertex_array is not None:
                 self._reset_gl_state()
@@ -316,6 +332,8 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
                 logging.getLogger(__name__).debug("OCCT resource cleanup", exc_info=True)
         self._presentation = None
         self._displayed_shape = None
+        self._prepared_shape = None
+        self._notified_shape = None
         self._wrapped_fbo = None
         self._context = None
         self._view = None

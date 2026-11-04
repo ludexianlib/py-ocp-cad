@@ -21,6 +21,7 @@ QtObject {
     readonly property int card_radius: 22
 
     function format_number(value, decimals) {
-        return Number(value || 0).toLocaleString(Qt.locale("en_US"), "f", decimals || 0)
+        if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—"
+        return Number(value).toLocaleString(Qt.locale("en_US"), "f", decimals || 0)
     }
 }

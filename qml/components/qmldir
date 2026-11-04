@@ -7,3 +7,4 @@ BoxPanel 1.0 BoxPanel.qml
 ViewportPanel 1.0 ViewportPanel.qml
 ToastCard 1.0 ToastCard.qml
 ToastManager 1.0 ToastManager.qml
+LoadingDialog 1.0 LoadingDialog.qml

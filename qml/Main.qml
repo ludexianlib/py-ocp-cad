@@ -31,8 +31,8 @@ ApplicationWindow {
 
     Connections {
         target: root.cad_controller
-        function onState_changed() {
-            root.show_notice(root.cad_controller.status_text, root.cad_controller.last_error.length > 0)
+        function onNotice_requested(message, is_error) {
+            root.show_notice(message, is_error)
         }
     }
 
@@ -79,8 +79,10 @@ ApplicationWindow {
                         page_title: root.current_page === 0 ? "你的建模工作台" : "我的模型库"
                         subtitle_text: root.current_page === 0 ? "创建模型、调整尺寸，专注每一次构建。" : "当前会话中的每一个想法，都在这里。"
                         has_model: root.cad_controller.has_model
+                        loading: root.cad_controller.loading
                         onNew_requested: root.start_new_model()
                         onExport_requested: save_dialog.open()
+                        onImport_requested: import_dialog.open()
                     }
 
                     ColumnLayout {
@@ -263,6 +265,25 @@ ApplicationWindow {
         anchors.topMargin: 20
         width: Math.max(0, Math.min(480, parent.width - 48))
         z: 1000
+    }
+
+    LoadingDialog {
+        loading: root.cad_controller.loading
+        filename: root.cad_controller.loading_filename
+        stage_text: root.cad_controller.loading_stage
+        elapsed_seconds: root.cad_controller.loading_elapsed_seconds
+    }
+
+    FileDialog {
+        id: import_dialog
+        objectName: "step_import_dialog"
+        title: "导入 STEP 模型"
+        fileMode: FileDialog.OpenFile
+        currentFolder: root.documents_folder
+        nameFilters: ["STEP 模型 (*.step *.stp *.STEP *.STP)"]
+        onAccepted: {
+            if (root.cad_controller.import_step(selectedFile)) root.current_page = 0
+        }
     }
 
     FileDialog {

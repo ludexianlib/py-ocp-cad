@@ -15,11 +15,13 @@ class OcctViewport(QQuickFramebufferObject):
     render_state_changed = pyqtSignal()
     orbit_started = pyqtSignal()
     _render_result = pyqtSignal(bool, str)
+    _shape_result = pyqtSignal(object, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._controller = None
         self._shape = None
+        self._display_shape = None
         self._view_mode = "iso"
         self._pending_commands = []
         self._render_ready = False
@@ -36,6 +38,7 @@ class OcctViewport(QQuickFramebufferObject):
             Qt.MouseButton.LeftButton | Qt.MouseButton.MiddleButton | Qt.MouseButton.RightButton
         )
         self._render_result.connect(self._set_render_state, Qt.ConnectionType.QueuedConnection)
+        self._shape_result.connect(self._set_shape_state, Qt.ConnectionType.QueuedConnection)
 
     @pyqtProperty(QObject, notify=controller_changed)
     def controller(self):
@@ -79,9 +82,15 @@ class OcctViewport(QQuickFramebufferObject):
         shape = self._controller.active_shape if self._controller is not None else None
         if shape is not self._shape:
             self._shape = shape
+            self._display_shape = self._controller.active_display_shape if self._controller is not None else None
             self._pending_commands.clear()
             self._reset_drag()
             self.update()
+
+    @pyqtSlot(object, str)
+    def _set_shape_state(self, shape, error_text):
+        if self._controller is not None and shape is self._shape:
+            self._controller.report_model_displayed(shape, error_text)
 
     @pyqtSlot(bool, str)
     def _set_render_state(self, ready, error_text):
@@ -104,7 +113,7 @@ class OcctViewport(QQuickFramebufferObject):
         self._queue_command("fit")
 
     def createRenderer(self):  # Qt virtual method names follow the Qt API.
-        return OcctRenderer(self._render_result.emit)
+        return OcctRenderer(self._render_result.emit, self._shape_result.emit)
 
     def _reset_drag(self):
         self._drag_mode = ""

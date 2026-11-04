@@ -7,8 +7,11 @@ Item {
     property string page_title: "你的建模工作台"
     property string subtitle_text: "创建模型、调整尺寸，专注每一次构建。"
     property bool has_model: false
+    property bool loading: false
+    enabled: !loading
     signal new_requested()
     signal export_requested()
+    signal import_requested()
     implicitHeight: 78
     opacity: 0
     Component.onCompleted: opacity = 1
@@ -30,6 +33,29 @@ Item {
                 elide: Text.ElideRight
             }
             Label { text: root.subtitle_text; color: Theme.muted; font.pixelSize: 12 }
+        }
+        Button {
+            id: import_button
+            objectName: "header_import_button"
+            text: "导入 STEP"
+            implicitHeight: 42
+            leftPadding: 18
+            rightPadding: 18
+            onClicked: root.import_requested()
+            background: Rectangle {
+                radius: 11
+                color: import_button.hovered ? Theme.primary_soft : Theme.surface
+                border.color: Theme.line
+                Behavior on color { ColorAnimation { duration: 150 } }
+            }
+            contentItem: Label {
+                text: import_button.text
+                color: Theme.primary
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
         }
         Button {
             id: export_button
