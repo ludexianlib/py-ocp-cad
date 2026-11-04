@@ -1,0 +1,9 @@
+singleton Theme 1.0 Theme.qml
+Card 1.0 Card.qml
+MetricCard 1.0 MetricCard.qml
+Sidebar 1.0 Sidebar.qml
+CadToolbar 1.0 CadToolbar.qml
+BoxPanel 1.0 BoxPanel.qml
+ViewportPanel 1.0 ViewportPanel.qml
+ToastCard 1.0 ToastCard.qml
+ToastManager 1.0 ToastManager.qml

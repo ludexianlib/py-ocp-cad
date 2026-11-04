@@ -1,0 +1,18 @@
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build output and local caches
+/build/
+/out/
+/dist/
+*.egg-info/
+/.cache/
+
+# Generated CAD models
+/box.step
