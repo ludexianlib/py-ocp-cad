@@ -10,12 +10,14 @@ from PyQt6.QtGui import QOpenGLContext
 from PyQt6.QtOpenGL import QOpenGLFunctions_4_1_Core
 from PyQt6.QtQuick import QQuickFramebufferObject
 
-from OCP.AIS import AIS_DisplayMode, AIS_InteractiveContext, AIS_SelectionScheme, AIS_Shape
+from OCP.AIS import AIS_ColoredShape, AIS_DisplayMode, AIS_InteractiveContext, AIS_SelectionScheme, AIS_Shape
 from OCP.Aspect import Aspect_DisplayConnection, Aspect_GradientFillMethod, Aspect_NeutralWindow
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
 from OCP.OpenGl import OpenGl_Context, OpenGl_FrameBuffer, OpenGl_GraphicDriver
 from OCP.Quantity import Quantity_Color, Quantity_TypeOfColor
 from OCP.V3d import V3d_TypeOfOrientation, V3d_Viewer
+
+from app.models.model_appearance import appearance_targets
 
 
 class OcctRenderer(QQuickFramebufferObject.Renderer):
@@ -29,6 +31,7 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         self._pixel_ratio = 1.0
         self._shape = None
         self._prepared_shape = None
+        self._appearance = None
         self._notified_shape = None
         self._displayed_shape = None
         self._view_mode = "iso"
@@ -69,6 +72,7 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             self._failed = False
         self._shape = item._shape
         self._prepared_shape = item._display_shape
+        self._appearance = item._appearance
         self._view_mode = item._view_mode
         self._commands.extend(item._pending_commands)
         item._pending_commands.clear()
@@ -214,10 +218,14 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             display_shape = self._prepared_shape
             if display_shape is None:
                 display_shape = BRepBuilderAPI_Copy(self._shape, True, False).Shape()
-            self._presentation = AIS_Shape(display_shape)
+            self._presentation = AIS_ColoredShape(display_shape) if self._appearance else AIS_Shape(display_shape)
             if self._prepared_shape is not None:
                 self._presentation.Attributes().SetAutoTriangulation(False)
             self._presentation.SetColor(self._color(128, 105, 206))
+            if self._appearance:
+                for target, rgb in appearance_targets(display_shape, self._appearance, for_display=True):
+                    color = Quantity_Color(*rgb, Quantity_TypeOfColor.Quantity_TOC_sRGB)
+                    self._presentation.SetCustomColor(target, color)
             self._presentation.Attributes().SetFaceBoundaryDraw(True)
             self._context.Display(self._presentation, AIS_DisplayMode.AIS_Shaded, 0, False)
             self._displayed_shape = self._shape
@@ -339,6 +347,7 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         self._presentation = None
         self._displayed_shape = None
         self._prepared_shape = None
+        self._appearance = None
         self._notified_shape = None
         self._wrapped_fbo = None
         self._context = None

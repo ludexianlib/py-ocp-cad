@@ -44,23 +44,11 @@ def import_step(source: str | Path, directory: str | Path, notify) -> None:
     from OCP.BRepBndLib import BRepBndLib
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
-    from OCP.IFSelect import IFSelect_RetDone
-    from OCP.STEPControl import STEPControl_Reader
+    from app.models.model_appearance import map_display_colors, read_step_model
 
     path = validate_step_path(source)
     directory = Path(directory)
-    notify("phase", text="正在读取文件…")
-    reader = STEPControl_Reader()
-    if reader.ReadFile(str(path)) != IFSelect_RetDone:
-        raise ValueError("无法读取 STEP 文件，请检查文件格式是否正确。")
-    reader.SetSystemLengthUnit(1.0)  # The workbench uses millimetres.
-    notify("phase", text="正在转换模型…")
-    if reader.TransferRoots() == 0:
-        raise ValueError("STEP 文件中没有可导入的几何模型。")
-    shape = reader.OneShape()
-    if shape.IsNull():
-        raise ValueError("STEP 文件中没有可导入的几何模型。")
-    del reader
+    shape, appearance = read_step_model(path, notify)
 
     bounds = Bnd_Box()
     BRepBndLib.AddOptimal_s(shape, bounds, False, False)
@@ -74,7 +62,10 @@ def import_step(source: str | Path, directory: str | Path, notify) -> None:
         raise ValueError("模型尺寸无效。")
 
     notify("phase", text="正在准备三维显示…")
-    display_shape = BRepBuilderAPI_Copy(shape, True, False).Shape()
+    copier = BRepBuilderAPI_Copy(shape, True, False)
+    display_shape = copier.Shape()
+    map_display_colors(shape, display_shape, copier, appearance)
+    del copier
     diagonal = math.sqrt(sum(value * value for value in dimensions))
     deflection = max(0.01, min(0.5, diagonal * 0.001))
     mesher = BRepMesh_IncrementalMesh(display_shape, deflection, False, 0.35, True)
@@ -84,7 +75,8 @@ def import_step(source: str | Path, directory: str | Path, notify) -> None:
         raise OSError("无法保存模型中间数据。")
     if not BinTools.Write_s(display_shape, str(directory / "display.brep")):
         raise OSError("无法保存显示中间数据。")
-    metadata = {"name": path.stem, "source_path": str(path), "dimensions": dimensions}
+    metadata = {"name": path.stem, "source_path": str(path), "dimensions": dimensions,
+                "appearance": appearance}
     (directory / "result.json").write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
     notify("prepared")
     del mesher, display_shape
@@ -114,6 +106,7 @@ def load_prepared_model(directory: str | Path) -> dict:
     """Read the compact handoff files in a background thread."""
     from OCP.BinTools import BinTools
     from OCP.TopoDS import TopoDS_Shape
+    from app.models.model_appearance import appearance_targets
 
     directory = Path(directory)
     result = json.loads((directory / "result.json").read_text(encoding="utf-8"))
@@ -122,6 +115,10 @@ def load_prepared_model(directory: str | Path) -> dict:
         if not BinTools.Read_s(shape, str(directory / filename)) or shape.IsNull():
             raise RuntimeError("无法接收导入的模型数据。")
         result[key] = shape
+    # Validate both index spaces after BREP deserialization, before adoption.
+    for key, for_display in (("shape", False), ("display_shape", True)):
+        for _ in appearance_targets(result[key], result.get("appearance"), for_display):
+            pass
     return result
 
 

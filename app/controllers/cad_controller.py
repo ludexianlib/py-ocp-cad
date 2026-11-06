@@ -58,6 +58,11 @@ class CadController(QObject):
         record = self._model.active_record
         return record.display_shape if record else None
 
+    @property
+    def active_appearance(self):
+        record = self._model.active_record
+        return record.appearance if record else None
+
     @pyqtProperty(bool, notify=loading_changed)
     def loading(self):
         return self._loading

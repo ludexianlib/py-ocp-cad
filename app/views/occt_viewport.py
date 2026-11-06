@@ -22,6 +22,7 @@ class OcctViewport(QQuickFramebufferObject):
         self._controller = None
         self._shape = None
         self._display_shape = None
+        self._appearance = None
         self._view_mode = "iso"
         self._pending_commands = []
         self._render_ready = False
@@ -83,6 +84,7 @@ class OcctViewport(QQuickFramebufferObject):
         if shape is not self._shape:
             self._shape = shape
             self._display_shape = self._controller.active_display_shape if self._controller is not None else None
+            self._appearance = self._controller.active_appearance if self._controller is not None else None
             self._pending_commands.clear()
             self._reset_drag()
             self.update()

@@ -27,6 +27,7 @@ class ModelRecord:
     shape: TopoDS_Shape = field(repr=False)
     display_shape: TopoDS_Shape | None = field(default=None, repr=False)
     source_path: str = ""
+    appearance: dict | None = field(default=None, repr=False)
 
     def to_summary(self) -> dict:
         return {
@@ -108,6 +109,7 @@ class CadModel:
             shape=shape,
             display_shape=display_shape,
             source_path=result["source_path"],
+            appearance=result.get("appearance"),
         )
         self._records[record.model_id] = record
         self._active_id = record.model_id
@@ -139,6 +141,11 @@ class CadModel:
             raise ValueError("请选择 .step 或 .stp 文件。")
         if not path.parent.is_dir():
             raise ValueError("保存目录不存在。")
+        if record.appearance:
+            from app.models.model_appearance import export_colored_step
+
+            export_colored_step(record.shape, record.appearance, path)
+            return path.resolve()
         writer = STEPControl_Writer()
         if writer.Transfer(record.shape, STEPControl_AsIs) != IFSelect_RetDone:
             raise RuntimeError("模型转换失败，未能导出 STEP。")
