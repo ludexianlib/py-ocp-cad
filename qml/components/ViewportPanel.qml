@@ -35,26 +35,22 @@ Card {
                     id: view_controls
                     anchors.centerIn: parent
                     spacing: 2
-                    Repeater {
-                        model: [{key: "iso", label: "等轴测"}, {key: "front", label: "正视"}, {key: "top", label: "俯视"}]
-                        Button {
-                            id: view_button
-                            required property var modelData
-                            objectName: "view_" + modelData.key
-                            readonly property bool is_active: root.view_mode === modelData.key
-                            width: modelData.key === "iso" ? 62 : 48
-                            height: 27
-                            onClicked: {
-                                root.view_mode = modelData.key
-                                native_view.fit_view()
-                            }
-                            background: Rectangle {
-                                radius: 8
-                                color: view_button.is_active ? "white" : view_button.hovered ? "#eeebf7" : "transparent"
-                                Behavior on color { ColorAnimation { duration: 140 } }
-                            }
-                            contentItem: Label { text: view_button.modelData.label; font.pixelSize: 10; color: view_button.is_active ? Theme.primary : Theme.muted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    Button {
+                        id: view_button
+                        objectName: "view_iso"
+                        readonly property bool is_active: root.view_mode === "iso"
+                        width: 62
+                        height: 27
+                        onClicked: {
+                            root.view_mode = "iso"
+                            native_view.fit_view()
                         }
+                        background: Rectangle {
+                            radius: 8
+                            color: view_button.is_active ? "white" : view_button.hovered ? "#eeebf7" : "transparent"
+                            Behavior on color { ColorAnimation { duration: 140 } }
+                        }
+                        contentItem: Label { text: "等轴测"; font.pixelSize: 10; color: view_button.is_active ? Theme.primary : Theme.muted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         id: fit_button

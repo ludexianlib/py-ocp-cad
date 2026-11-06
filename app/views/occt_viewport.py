@@ -16,6 +16,7 @@ class OcctViewport(QQuickFramebufferObject):
     orbit_started = pyqtSignal()
     _render_result = pyqtSignal(bool, str)
     _shape_result = pyqtSignal(object, str)
+    _navigation_started = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -32,7 +33,6 @@ class OcctViewport(QQuickFramebufferObject):
         self._last_position = None
         self._drag_button = Qt.MouseButton.NoButton
         self._drag_started = False
-        self._orbit_started = False
         self.setMirrorVertically(True)
         self.setAcceptHoverEvents(True)
         self.setAcceptedMouseButtons(
@@ -40,6 +40,7 @@ class OcctViewport(QQuickFramebufferObject):
         )
         self._render_result.connect(self._set_render_state, Qt.ConnectionType.QueuedConnection)
         self._shape_result.connect(self._set_shape_state, Qt.ConnectionType.QueuedConnection)
+        self._navigation_started.connect(self.orbit_started, Qt.ConnectionType.QueuedConnection)
 
     @pyqtProperty(QObject, notify=controller_changed)
     def controller(self):
@@ -115,7 +116,7 @@ class OcctViewport(QQuickFramebufferObject):
         self._queue_command("fit")
 
     def createRenderer(self):  # Qt virtual method names follow the Qt API.
-        return OcctRenderer(self._render_result.emit, self._shape_result.emit)
+        return OcctRenderer(self._render_result.emit, self._shape_result.emit, self._navigation_started.emit)
 
     def _reset_drag(self):
         self._drag_mode = ""
@@ -123,7 +124,6 @@ class OcctViewport(QQuickFramebufferObject):
         self._last_position = None
         self._drag_button = Qt.MouseButton.NoButton
         self._drag_started = False
-        self._orbit_started = False
         self.setKeepMouseGrab(False)
 
     def _handle_hover(self, event):
@@ -156,7 +156,6 @@ class OcctViewport(QQuickFramebufferObject):
         self._last_position = self._press_position
         self._drag_button = event.button()
         self._drag_started = False
-        self._orbit_started = False
         self._drag_mode = "pan"
         if event.button() == Qt.MouseButton.LeftButton and not (
             event.modifiers() & Qt.KeyboardModifier.ShiftModifier
@@ -181,9 +180,6 @@ class OcctViewport(QQuickFramebufferObject):
             if self._drag_mode == "rotate":
                 self._queue_command("rotate_start", *self._press_position)
         if self._drag_mode == "rotate":
-            if not self._orbit_started:
-                self._orbit_started = True
-                self.orbit_started.emit()
             self._queue_command("rotate", *position)
         else:
             self._queue_command(
@@ -215,7 +211,8 @@ class OcctViewport(QQuickFramebufferObject):
             return
         self._reset_drag()
         self._queue_command("hover_clear")
-        self.fit_view()
+        position = event.position()
+        self._queue_command("double_click", position.x(), position.y())
         event.accept()
 
     def wheelEvent(self, event):

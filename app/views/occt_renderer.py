@@ -18,13 +18,15 @@ from OCP.Quantity import Quantity_Color, Quantity_TypeOfColor
 from OCP.V3d import V3d_TypeOfOrientation, V3d_Viewer
 
 from app.models.model_appearance import appearance_targets
+from app.views.view_cube import ViewCube
 
 
 class OcctRenderer(QQuickFramebufferObject.Renderer):
-    def __init__(self, report_result, report_shape):
+    def __init__(self, report_result, report_shape, report_navigation):
         super().__init__()
         self._report_result = report_result
         self._report_shape = report_shape
+        self._report_navigation = report_navigation
         self._quick_window = None
         self._release_callback = None
         self._window_id = 0
@@ -36,6 +38,8 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         self._displayed_shape = None
         self._view_mode = "iso"
         self._commands = []
+        self._rotation_blocked = False
+        self._rotation_reported = False
         self._functions = None
         self._bind_framebuffer = None
         self._bind_vertex_array = None
@@ -47,6 +51,7 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         self._gl_context = None
         self._wrapped_fbo = None
         self._presentation = None
+        self._view_cube = None
         self._last_size = None
         self._failed = False
         self._ready_reported = False
@@ -151,6 +156,7 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             False,
         )
         self._wrapped_fbo = OpenGl_FrameBuffer()
+        self._view_cube = ViewCube(self._context, self._view, self._pixel_ratio)
         self._bind_framebuffer(0x8D40, framebuffer_id)
         logging.getLogger(__name__).info("OCCT view initialized, framebuffer=%s size=%s", framebuffer_id, size)
 
@@ -193,6 +199,8 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             functions.glPixelStorei(row_length, 0)
 
     def _set_projection(self, view_mode):
+        if self._view_cube is not None:
+            self._view_cube.cancel_animation()
         orientations = {
             "iso": V3d_TypeOfOrientation.V3d_XposYnegZpos,
             "front": V3d_TypeOfOrientation.V3d_Yneg,
@@ -202,6 +210,8 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             self._view.SetProj(orientations[view_mode])
 
     def _fit_view(self):
+        if self._view_cube is not None:
+            self._view_cube.cancel_animation()
         if self._displayed_shape is not None:
             self._view.FitAll(0.12, False)
             self._view.ZFitAll()
@@ -209,7 +219,12 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
     def _update_shape(self):
         if self._displayed_shape is self._shape:
             return
-        self._context.RemoveAll(False)
+        self._view_cube.cancel_animation()
+        self._context.ClearDetected(False)
+        self._rotation_blocked = False
+        self._rotation_reported = False
+        if self._presentation is not None:
+            self._context.Remove(self._presentation, False)
         self._presentation = None
         self._displayed_shape = None
         if self._shape is not None and not self._shape.IsNull():
@@ -232,6 +247,14 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             self._set_projection(self._view_mode)
             self._fit_view()
 
+    def _detect_at(self, position):
+        x, y = (round(value * self._pixel_ratio) for value in position)
+        if 0 <= x < self._last_size[0] and 0 <= y < self._last_size[1]:
+            self._context.MoveTo(x, y, self._view, False)
+        else:
+            self._context.ClearDetected(False)
+        return self._view_cube.is_detected()
+
     def _apply_commands(self):
         commands, self._commands = self._commands, []
         for command, *arguments in commands:
@@ -243,21 +266,34 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             elif command == "hover_clear":
                 self._context.ClearDetected(False)
             elif self._displayed_shape is not None:
-                if command in {"hover", "select"}:
-                    x, y = (round(value * self._pixel_ratio) for value in arguments)
-                    if 0 <= x < self._last_size[0] and 0 <= y < self._last_size[1]:
-                        self._context.MoveTo(x, y, self._view, False)
-                    else:
-                        self._context.ClearDetected(False)
-                    if command == "select":
-                        self._context.SelectDetected(AIS_SelectionScheme.AIS_SelectionScheme_Replace)
+                if command in {"hover", "select", "double_click"}:
+                    cube_hit = self._detect_at(arguments)
+                    if command != "hover":
+                        if cube_hit and self._view_cube.handle_click():
+                            self._report_navigation()
+                        elif command == "double_click":
+                            self._fit_view()
+                        else:
+                            self._context.SelectDetected(AIS_SelectionScheme.AIS_SelectionScheme_Replace)
                 elif command == "rotate_start":
-                    self._view.StartRotation(*(round(value * self._pixel_ratio) for value in arguments))
-                elif command == "rotate":
+                    # Decide from the original press position on the render
+                    # thread; surrounding blank space must remain draggable.
+                    self._rotation_blocked = self._detect_at(arguments)
+                    self._rotation_reported = False
+                    self._context.ClearDetected(False)
+                    if not self._rotation_blocked:
+                        self._view_cube.cancel_animation()
+                        self._view.StartRotation(*(round(value * self._pixel_ratio) for value in arguments))
+                elif command == "rotate" and not self._rotation_blocked:
                     self._view.Rotation(*(round(value * self._pixel_ratio) for value in arguments))
+                    if not self._rotation_reported:
+                        self._rotation_reported = True
+                        self._report_navigation()
                 elif command == "pan":
+                    self._view_cube.cancel_animation()
                     self._view.Pan(*(round(value * self._pixel_ratio) for value in arguments))
                 elif command == "zoom":
+                    self._view_cube.cancel_animation()
                     scale = self._view.Camera().Scale() / arguments[0]
                     if 0.00001 <= scale <= 1_000_000_000:
                         self._view.SetZoom(arguments[0])
@@ -277,11 +313,15 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             if self._view is None:
                 self._initialize(framebuffer_id, size)
             self._wrap_framebuffer(size)
+            self._view_cube.update_scale(self._pixel_ratio)
             # Qt and OCCT cache GL state independently. Clear Qt's drawing state.
             self._reset_gl_state()
             self._update_shape()
             self._apply_commands()
+            animating = self._view_cube.update_animation()
             self._view.Redraw()
+            if animating:
+                self.update()
             if self._notified_shape is not self._displayed_shape:
                 self._notified_shape = self._displayed_shape
                 self._report_shape(self._displayed_shape, "")
@@ -345,6 +385,7 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             except Exception:
                 logging.getLogger(__name__).debug("OCCT resource cleanup", exc_info=True)
         self._presentation = None
+        self._view_cube = None
         self._displayed_shape = None
         self._prepared_shape = None
         self._appearance = None
