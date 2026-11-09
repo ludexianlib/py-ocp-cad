@@ -70,6 +70,33 @@ def configure_graphics():
     _graphics_configured = True
 
 
+def configure_fonts(application):
+    """Choose available outline fonts before creating QML controls/popups."""
+    from PyQt6.QtGui import QFont, QFontDatabase
+
+    preferred = []
+    font_file = os.environ.get("CAD_WORKSPACE_FONT")
+    if font_file:
+        font_id = QFontDatabase.addApplicationFont(font_file)
+        if font_id >= 0:
+            preferred.extend(QFontDatabase.applicationFontFamilies(font_id))
+    available = set(QFontDatabase.families())
+    preferred.extend(family for family in (
+        "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", "DejaVu Sans", "Segoe UI Symbol"
+    ) if family in available)
+    preferred.append(application.font().family())
+    if sys.platform == "win32":
+        fixed_fallbacks = [family for family in ("Consolas", "Courier New") if family in available]
+        if fixed_fallbacks:
+            QFont.insertSubstitutions("Fixedsys", fixed_fallbacks)
+    font = QFont()
+    font.setFamilies(list(dict.fromkeys(preferred)))
+    font.setPixelSize(13)
+    font.setStyleHint(QFont.StyleHint.SansSerif)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferOutline)
+    application.setFont(font)
+
+
 def create_engine(application):
     from PyQt6.QtCore import QStandardPaths, QUrl
     from PyQt6.QtQml import QQmlApplicationEngine, QQmlEngine, qmlRegisterType
@@ -79,6 +106,7 @@ def create_engine(application):
     from app.views.occt_viewport import OcctViewport
 
     configure_graphics()
+    configure_fonts(application)
     qmlRegisterType(OcctViewport, "Cad.Native", 1, 0, "OcctViewport")
     controller = CadController(application)
     QQmlEngine.setObjectOwnership(controller, QQmlEngine.ObjectOwnership.CppOwnership)
@@ -100,7 +128,7 @@ def main(argv=None) -> int:
     configure_diagnostics()
     try:
         from PyQt6.QtCore import QEvent, QTimer, QtMsgType, qInstallMessageHandler
-        from PyQt6.QtGui import QFont, QFontDatabase, QGuiApplication, QIcon
+        from PyQt6.QtGui import QGuiApplication, QIcon
 
         def log_qt_message(message_type, context, message):
             level = {
@@ -122,16 +150,6 @@ def main(argv=None) -> int:
         icon_name = "cad-studio.ico" if sys.platform == "win32" else "cad-studio.svg"
         icon_path = Path(__file__).resolve().parent / "assets" / icon_name
         application.setWindowIcon(QIcon(str(icon_path)))
-        font_file = os.environ.get("CAD_WORKSPACE_FONT")
-        if font_file:
-            QFontDatabase.addApplicationFont(font_file)
-        families = set(QFontDatabase.families())
-        for family in ("Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", "DejaVu Sans"):
-            if family in families:
-                font = QFont(family)
-                font.setPixelSize(13)
-                application.setFont(font)
-                break
         engine, controller = create_engine(application)
     except ModuleNotFoundError as error:
         print(f"缺少依赖：{error.name}。请运行 .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt", file=sys.stderr)

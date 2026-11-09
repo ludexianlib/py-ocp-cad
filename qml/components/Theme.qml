@@ -17,7 +17,7 @@ QtObject {
     readonly property color orange: "#f59300"
     readonly property color green: "#83ae29"
     readonly property color error: "#cd4c63"
-    readonly property string font_family: "Microsoft YaHei UI"
+    readonly property string font_family: Qt.application.font.family
     readonly property int card_radius: 22
 
     function format_number(value, decimals) {

@@ -9,7 +9,9 @@ Card {
     property bool editor_is_imported: false
     property bool is_ready: false
     signal create_requested(real length, real width, real height)
-    padding: 22
+    padding: 18
+    implicitHeight: root.editor_is_imported ? 250 : 300
+    Behavior on implicitHeight { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
     function dimension_text(value, fallback) {
         if (value === null || value === undefined || !Number.isFinite(Number(value)))
@@ -53,7 +55,7 @@ Card {
             id: text_field
             objectName: dimension_root.editor_name
             Layout.fillWidth: true
-            implicitHeight: 42
+            implicitHeight: 36
             font.pixelSize: 14
             color: Theme.ink
             leftPadding: 14
@@ -91,21 +93,21 @@ Card {
                 Label { anchors.centerIn: parent; text: root.editor_is_imported ? "STEP" : "BOX"; color: Theme.primary; font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 1 }
             }
         }
-        Label { text: root.editor_is_imported ? "导入模型的包围盒尺寸" : "从简单的几何，开始一次构建"; color: Theme.muted; font.pixelSize: 11; Layout.topMargin: 8 }
+        Label { text: root.editor_is_imported ? "导入模型的包围盒尺寸" : "从简单的几何，开始一次构建"; color: Theme.muted; font.pixelSize: 11; Layout.topMargin: 6 }
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 25
-            spacing: 12
+            Layout.topMargin: 14
+            spacing: 8
             DimensionField { id: length_input; label_text: "长度"; editor_name: "length_editor"; read_only: root.editor_is_imported; Layout.fillWidth: true }
             DimensionField { id: width_input; label_text: "宽度"; editor_name: "width_editor"; read_only: root.editor_is_imported; Layout.fillWidth: true }
             DimensionField { id: height_input; label_text: "高度"; editor_name: "height_editor"; read_only: root.editor_is_imported; Layout.fillWidth: true }
         }
-        Item { Layout.fillHeight: true; Layout.minimumHeight: 20 }
+        Item { Layout.fillHeight: true; Layout.minimumHeight: 10 }
         Button {
             id: create_button
             objectName: "create_model_button"
             Layout.fillWidth: true
-            implicitHeight: 44
+            implicitHeight: 38
             text: "创建模型  →"
             visible: !root.editor_is_imported
             enabled: !root.editor_is_imported && length_input.input_valid && width_input.input_valid && height_input.input_valid
@@ -119,7 +121,7 @@ Card {
         }
         Label {
             Layout.fillWidth: true
-            Layout.topMargin: 14
+            Layout.topMargin: 10
             text: root.editor_is_imported ? "尺寸单位 mm · 导入模型尺寸仅供查看" : create_button.enabled ? "尺寸单位 mm · 支持 2 位小数" : "请输入 0.01–10000 之间的有效尺寸"
             color: root.editor_is_imported || create_button.enabled ? Theme.muted : Theme.error
             Behavior on color { ColorAnimation { duration: 150 } }

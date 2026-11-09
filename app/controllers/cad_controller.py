@@ -5,6 +5,7 @@ from datetime import datetime
 from PyQt6.QtCore import QElapsedTimer, QObject, QTimer, Qt, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 
 from app.controllers.step_import_task import StepImportTask
+from app.controllers.entity_tree_model import EntityTreeModel
 from app.models.cad_model import CadModel
 from app.models.step_importer import validate_step_path
 
@@ -13,10 +14,13 @@ class CadController(QObject):
     state_changed = pyqtSignal()
     loading_changed = pyqtSignal()
     notice_requested = pyqtSignal(str, bool)
+    entity_state_changed = pyqtSignal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._model = CadModel()
+        self._entity_tree_model = EntityTreeModel(self)
+        self.state_changed.connect(self._sync_entity_tree)
         self._status_text = "工作空间已就绪。"
         self._last_error = ""
         self._last_export_path = ""
@@ -58,6 +62,66 @@ class CadController(QObject):
     def active_appearance(self):
         record = self._model.active_record
         return record.appearance if record else None
+
+    @property
+    def active_entities(self):
+        record = self._model.active_record
+        return record.entities if record else None
+
+    @pyqtProperty(QObject, constant=True)
+    def entity_tree_model(self):
+        return self._entity_tree_model
+
+    @pyqtProperty(int, notify=entity_state_changed)
+    def selected_entity_count(self):
+        tree = self.active_entities
+        return len(tree.selected_ids) if tree else 0
+
+    @pyqtProperty(int, notify=entity_state_changed)
+    def entity_count(self):
+        tree = self.active_entities
+        return len(tree.leaves) if tree else 0
+
+    @pyqtProperty(str, notify=entity_state_changed)
+    def entity_tree_source(self):
+        tree = self.active_entities
+        return tree.metadata.get("source", "geometry") if tree else ""
+
+    def _sync_entity_tree(self):
+        self._entity_tree_model.set_tree(self.active_entities)
+        self.entity_state_changed.emit()
+
+    def _notify_entities(self):
+        self._entity_tree_model.refresh_states()
+        self.entity_state_changed.emit()
+
+    @pyqtSlot(str, bool, bool)
+    def select_entity(self, node_id, additive, context):
+        tree = self.active_entities
+        if tree is not None and not self._loading:
+            tree.select(node_id, additive, context)
+            self._notify_entities()
+
+    @pyqtSlot()
+    def hide_selected_entities(self):
+        tree = self.active_entities
+        if tree is not None and not self._loading:
+            tree.hide_selected()
+            self._notify_entities()
+
+    @pyqtSlot()
+    def isolate_selected_entities(self):
+        tree = self.active_entities
+        if tree is not None and not self._loading:
+            tree.isolate_selected()
+            self._notify_entities()
+
+    @pyqtSlot()
+    def show_all_entities(self):
+        tree = self.active_entities
+        if tree is not None and not self._loading:
+            tree.show_all()
+            self._notify_entities()
 
     @pyqtProperty(bool, notify=loading_changed)
     def loading(self):

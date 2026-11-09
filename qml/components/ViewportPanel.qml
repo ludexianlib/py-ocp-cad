@@ -9,6 +9,7 @@ Card {
     required property var cad_controller
     property var active_model: ({})
     property string view_mode: "iso"
+    signal context_menu_requested(var source_item, real mouse_x, real mouse_y)
     readonly property bool has_model: !!root.active_model.model_id
     padding: 22
 
@@ -117,6 +118,7 @@ Card {
                     controller: root.cad_controller
                     view_mode: root.view_mode
                     onOrbit_started: root.view_mode = "free"
+                    onContext_menu_requested: (mouse_x, mouse_y) => root.context_menu_requested(native_view, mouse_x, mouse_y)
                 }
                 Label { anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 15; text: "3D PREVIEW"; font.pixelSize: 8; font.letterSpacing: 1.8; color: "#64748b" }
                 Label { anchors.bottom: parent.bottom; anchors.right: parent.right; anchors.margins: 13; text: "单位 · mm"; font.pixelSize: 9; color: "#718096" }
@@ -144,7 +146,7 @@ Card {
             }
             Label { text: native_view.error_text ? "预览加载失败" : !native_view.render_ready ? "正在加载预览" : root.has_model ? "三维模型已同步" : "等待模型"; color: Theme.muted; font.pixelSize: 10 }
             Item { Layout.fillWidth: true }
-            Label { text: "左键旋转 · 右键平移 · 滚轮缩放 · 双击适配"; color: "#aaa4ba"; font.pixelSize: 9 }
+            Label { text: "单击选择 · Ctrl 多选 · 右键菜单/拖动平移"; color: "#aaa4ba"; font.pixelSize: 9 }
         }
     }
 }

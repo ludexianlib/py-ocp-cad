@@ -10,6 +10,8 @@ from OCP.IFSelect import IFSelect_RetDone
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
 from OCP.TopoDS import TopoDS_Shape
 
+from app.models.entity_tree import EntityTree, load_entity_tree
+
 
 @dataclass(slots=True)
 class ModelRecord:
@@ -22,6 +24,7 @@ class ModelRecord:
     display_shape: TopoDS_Shape | None = field(default=None, repr=False)
     source_path: str = ""
     appearance: dict | None = field(default=None, repr=False)
+    entities: EntityTree | None = field(default=None, repr=False)
 
     def to_summary(self) -> dict:
         return {
@@ -70,6 +73,7 @@ class CadModel:
             height=height,
             shape=shape,
         )
+        record.entities = load_entity_tree(None, shape, name=record.name)
         self._active_record = record
         return record
 
@@ -89,6 +93,7 @@ class CadModel:
             display_shape=display_shape,
             source_path=result["source_path"],
             appearance=result.get("appearance"),
+            entities=load_entity_tree(result.get("entities"), shape, display_shape, result["name"]),
         )
         self._active_record = record
         return record

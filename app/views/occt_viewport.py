@@ -14,9 +14,11 @@ class OcctViewport(QQuickFramebufferObject):
     view_mode_changed = pyqtSignal()
     render_state_changed = pyqtSignal()
     orbit_started = pyqtSignal()
+    context_menu_requested = pyqtSignal(float, float)
     _render_result = pyqtSignal(bool, str)
     _shape_result = pyqtSignal(object, str)
     _navigation_started = pyqtSignal()
+    _pick_result = pyqtSignal(object, str, bool, bool, float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -24,6 +26,7 @@ class OcctViewport(QQuickFramebufferObject):
         self._shape = None
         self._display_shape = None
         self._appearance = None
+        self._entity_snapshot = ()
         self._view_mode = "iso"
         self._pending_commands = []
         self._render_ready = False
@@ -41,6 +44,7 @@ class OcctViewport(QQuickFramebufferObject):
         self._render_result.connect(self._set_render_state, Qt.ConnectionType.QueuedConnection)
         self._shape_result.connect(self._set_shape_state, Qt.ConnectionType.QueuedConnection)
         self._navigation_started.connect(self.orbit_started, Qt.ConnectionType.QueuedConnection)
+        self._pick_result.connect(self._apply_pick, Qt.ConnectionType.QueuedConnection)
 
     @pyqtProperty(QObject, notify=controller_changed)
     def controller(self):
@@ -52,9 +56,11 @@ class OcctViewport(QQuickFramebufferObject):
             return
         if self._controller is not None:
             self._controller.state_changed.disconnect(self._refresh_shape)
+            self._controller.entity_state_changed.disconnect(self._refresh_entities)
         self._controller = value
         if value is not None:
             value.state_changed.connect(self._refresh_shape)
+            value.entity_state_changed.connect(self._refresh_entities)
         self._refresh_shape()
         self.controller_changed.emit()
 
@@ -86,9 +92,24 @@ class OcctViewport(QQuickFramebufferObject):
             self._shape = shape
             self._display_shape = self._controller.active_display_shape if self._controller is not None else None
             self._appearance = self._controller.active_appearance if self._controller is not None else None
+            self._refresh_entities()
             self._pending_commands.clear()
             self._reset_drag()
             self.update()
+
+    @pyqtSlot()
+    def _refresh_entities(self):
+        tree = self._controller.active_entities if self._controller is not None else None
+        self._entity_snapshot = tree.snapshot() if tree is not None else ()
+        self.update()
+
+    @pyqtSlot(object, str, bool, bool, float, float)
+    def _apply_pick(self, shape, node_id, additive, context, x, y):
+        if self._controller is None or shape is not self._shape or self._controller.loading:
+            return
+        self._controller.select_entity(node_id, additive, context)
+        if context:
+            self.context_menu_requested.emit(x, y)
 
     @pyqtSlot(object, str)
     def _set_shape_state(self, shape, error_text):
@@ -116,7 +137,8 @@ class OcctViewport(QQuickFramebufferObject):
         self._queue_command("fit")
 
     def createRenderer(self):  # Qt virtual method names follow the Qt API.
-        return OcctRenderer(self._render_result.emit, self._shape_result.emit, self._navigation_started.emit)
+        return OcctRenderer(self._render_result.emit, self._shape_result.emit,
+                            self._navigation_started.emit, self._pick_result.emit)
 
     def _reset_drag(self):
         self._drag_mode = ""
@@ -193,8 +215,10 @@ class OcctViewport(QQuickFramebufferObject):
             event.ignore()
             return
         position = event.position()
-        if self._drag_mode == "rotate" and not self._drag_started:
-            self._queue_command("select", position.x(), position.y())
+        if not self._drag_started and self._drag_button in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+            additive = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            context = self._drag_button == Qt.MouseButton.RightButton
+            self._queue_command("pick", position.x(), position.y(), additive, context)
         elif self.contains(position):
             self._queue_command("hover", position.x(), position.y())
         self._reset_drag()

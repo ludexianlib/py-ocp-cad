@@ -27,7 +27,7 @@ def new_document():
     return TDocStd_Document(TCollection_ExtendedString("BinXCAF"))
 
 
-def read_step_model(path, notify):
+def read_step_model(path, notify, *, include_entities=False):
     from OCP.BRep import BRep_Builder
     from OCP.collections import Sequence_TDF_Label
     from OCP.IFSelect import IFSelect_RetDone
@@ -65,6 +65,10 @@ def read_step_model(path, notify):
     if shape.IsNull():
         raise ValueError("STEP 文件中没有可导入的几何模型。")
     appearance = collect_appearance(shape, labels, shape_tool)
+    if include_entities:
+        from app.models.entity_tree import extract_step_tree
+
+        return shape, appearance, extract_step_tree(shape, labels, shape_tool, Path(path).stem)
     return shape, appearance
 
 

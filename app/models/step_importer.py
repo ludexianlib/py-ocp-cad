@@ -45,10 +45,11 @@ def import_step(source: str | Path, directory: str | Path, notify) -> None:
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from app.models.model_appearance import map_display_colors, read_step_model
+    from app.models.entity_tree import map_display_entities
 
     path = validate_step_path(source)
     directory = Path(directory)
-    shape, appearance = read_step_model(path, notify)
+    shape, appearance, entities = read_step_model(path, notify, include_entities=True)
 
     bounds = Bnd_Box()
     BRepBndLib.AddOptimal_s(shape, bounds, False, False)
@@ -65,6 +66,7 @@ def import_step(source: str | Path, directory: str | Path, notify) -> None:
     copier = BRepBuilderAPI_Copy(shape, True, False)
     display_shape = copier.Shape()
     map_display_colors(shape, display_shape, copier, appearance)
+    entities = map_display_entities(entities, shape, display_shape, copier)
     del copier
     diagonal = math.sqrt(sum(value * value for value in dimensions))
     deflection = max(0.01, min(0.5, diagonal * 0.001))
@@ -76,7 +78,7 @@ def import_step(source: str | Path, directory: str | Path, notify) -> None:
     if not BinTools.Write_s(display_shape, str(directory / "display.brep")):
         raise OSError("无法保存显示中间数据。")
     metadata = {"name": path.stem, "source_path": str(path), "dimensions": dimensions,
-                "appearance": appearance}
+                "appearance": appearance, "entities": entities}
     (directory / "result.json").write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
     notify("prepared")
 
@@ -86,6 +88,7 @@ def load_prepared_model(directory: str | Path) -> dict:
     from OCP.BinTools import BinTools
     from OCP.TopoDS import TopoDS_Shape
     from app.models.model_appearance import appearance_targets
+    from app.models.entity_tree import load_entity_tree
 
     directory = Path(directory)
     result = json.loads((directory / "result.json").read_text(encoding="utf-8"))
@@ -98,6 +101,8 @@ def load_prepared_model(directory: str | Path) -> dict:
     for key, for_display in (("shape", False), ("display_shape", True)):
         for _ in appearance_targets(result[key], result.get("appearance"), for_display):
             pass
+    result["entities"] = load_entity_tree(result.get("entities"), result["shape"], result["display_shape"],
+                                          result["name"]).metadata
     return result
 
 

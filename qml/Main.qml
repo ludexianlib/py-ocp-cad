@@ -20,7 +20,10 @@ ApplicationWindow {
     font.family: Theme.font_family
 
     function start_new_model() {
-        Qt.callLater(() => box_panel.start_new_model())
+        Qt.callLater(() => {
+            settings_scroll.contentY = Math.min(box_panel.y, settings_scroll.contentHeight - settings_scroll.height)
+            box_panel.start_new_model()
+        })
     }
     function show_notice(message, is_error) {
         toast_manager.show_toast(message, is_error)
@@ -82,6 +85,7 @@ ApplicationWindow {
                             cad_controller: root.cad_controller
                             active_model: root.cad_controller.active_model
                             enter_delay: 100
+                            onContext_menu_requested: (source_item, mouse_x, mouse_y) => entity_menu.open_at(source_item, mouse_x, mouse_y)
                         }
                         Flickable {
                             id: settings_scroll
@@ -91,7 +95,7 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             clip: true
                             contentWidth: width
-                            contentHeight: Math.max(settings_column.implicitHeight, height)
+                            contentHeight: Math.max(entity_panel.Layout.minimumHeight + settings_column.spacing + box_panel.implicitHeight, height)
                             boundsBehavior: Flickable.StopAtBounds
                             flickableDirection: Flickable.VerticalFlick
                             ScrollBar.vertical: ScrollBar { }
@@ -99,42 +103,27 @@ ApplicationWindow {
                             ColumnLayout {
                                 id: settings_column
                                 width: settings_scroll.width
-                                height: Math.max(implicitHeight, settings_scroll.height)
+                                height: settings_scroll.contentHeight
                                 spacing: 20
+                                EntityTreePanel {
+                                    id: entity_panel
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    Layout.preferredHeight: 320
+                                    Layout.minimumHeight: 260
+                                    cad_controller: root.cad_controller
+                                    enter_delay: 120
+                                    onContext_menu_requested: (source_item, mouse_x, mouse_y) => entity_menu.open_at(source_item, mouse_x, mouse_y)
+                                }
                                 BoxPanel {
                                     id: box_panel
                                     Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    Layout.minimumHeight: 404
-                                    Layout.preferredHeight: 404
+                                    Layout.minimumHeight: implicitHeight
+                                    Layout.preferredHeight: implicitHeight
+                                    Layout.maximumHeight: implicitHeight
                                     active_model: root.cad_controller.active_model
                                     enter_delay: 140
                                     onCreate_requested: (length, width, height) => root.cad_controller.create_box(length, width, height)
-                                }
-                                Card {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 176
-                                    Layout.minimumHeight: 176
-                                    padding: 20
-                                    color: Theme.primary
-                                    border.width: 0
-                                    enter_delay: 200
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        spacing: 7
-                                        Label { text: "让想法，成为作品。"; color: "white"; font.pixelSize: 18; font.weight: Font.DemiBold }
-                                        Label { text: "保存为 STEP，继续你的下一步。"; color: "#c5bdf0"; font.pixelSize: 10 }
-                                        Item { Layout.fillHeight: true }
-                                        Button {
-                                            id: quick_export_button
-                                            Layout.fillWidth: true
-                                            implicitHeight: 36
-                                            enabled: root.cad_controller.has_model
-                                            onClicked: save_dialog.open()
-                                            background: Rectangle { radius: 9; color: quick_export_button.hovered ? "#ffdb4d" : Theme.yellow; Behavior on color { ColorAnimation { duration: 150 } } }
-                                            contentItem: Label { text: "导出当前模型    ↗"; color: Theme.ink; font.pixelSize: 11; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -153,6 +142,12 @@ ApplicationWindow {
         anchors.topMargin: 20
         width: Math.max(0, Math.min(480, parent.width - 48))
         z: 1000
+    }
+
+    EntityContextMenu {
+        id: entity_menu
+        parent: Overlay.overlay
+        cad_controller: root.cad_controller
     }
 
     LoadingDialog {
@@ -199,7 +194,7 @@ ApplicationWindow {
             Label { text: "02  保存作品"; font.pixelSize: 13; font.weight: Font.DemiBold; color: Theme.primary }
             Label { text: "当前会话的模型在关闭程序后清空。需要保留的模型，请先导出为 STEP 文件。"; font.pixelSize: 12; color: Theme.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: "03  三维预览"; font.pixelSize: 13; font.weight: Font.DemiBold; color: Theme.primary }
-            Label { text: "工作区支持三维旋转、平移和缩放，可切换等轴测、正视和俯视。左键拖动旋转，右键或中键拖动平移，滚轮缩放，双击适配模型。"; font.pixelSize: 12; color: Theme.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: "左键单击选择，Ctrl + 单击多选，左键拖动旋转，右键拖动平移，滚轮缩放，双击适配。实体树和预览区支持右键显隐菜单；导出始终保存完整模型。"; font.pixelSize: 12; color: Theme.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
         }
         footer: Item {
             implicitHeight: 66

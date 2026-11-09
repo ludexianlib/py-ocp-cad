@@ -10,23 +10,25 @@ from PyQt6.QtGui import QOpenGLContext
 from PyQt6.QtOpenGL import QOpenGLFunctions_4_1_Core
 from PyQt6.QtQuick import QQuickFramebufferObject
 
-from OCP.AIS import AIS_ColoredShape, AIS_DisplayMode, AIS_InteractiveContext, AIS_SelectionScheme, AIS_Shape
+from OCP.AIS import AIS_ColoredShape, AIS_DisplayMode, AIS_InteractiveContext, AIS_Shape
 from OCP.Aspect import Aspect_DisplayConnection, Aspect_GradientFillMethod, Aspect_NeutralWindow
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
 from OCP.OpenGl import OpenGl_Context, OpenGl_FrameBuffer, OpenGl_GraphicDriver
 from OCP.Quantity import Quantity_Color, Quantity_TypeOfColor
 from OCP.V3d import V3d_TypeOfOrientation, V3d_Viewer
+from OCP.TopoDS import TopoDS_Iterator
 
-from app.models.model_appearance import appearance_targets
+from app.models.model_appearance import appearance_targets, shape_map
 from app.views.view_cube import ViewCube
 
 
 class OcctRenderer(QQuickFramebufferObject.Renderer):
-    def __init__(self, report_result, report_shape, report_navigation):
+    def __init__(self, report_result, report_shape, report_navigation, report_pick):
         super().__init__()
         self._report_result = report_result
         self._report_shape = report_shape
         self._report_navigation = report_navigation
+        self._report_pick = report_pick
         self._quick_window = None
         self._release_callback = None
         self._window_id = 0
@@ -50,7 +52,9 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         self._native_window = None
         self._gl_context = None
         self._wrapped_fbo = None
-        self._presentation = None
+        self._presentations = {}
+        self._entity_snapshot = ()
+        self._applied_entities = None
         self._view_cube = None
         self._last_size = None
         self._failed = False
@@ -78,6 +82,7 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         self._shape = item._shape
         self._prepared_shape = item._display_shape
         self._appearance = item._appearance
+        self._entity_snapshot = item._entity_snapshot
         self._view_mode = item._view_mode
         self._commands.extend(item._pending_commands)
         item._pending_commands.clear()
@@ -212,7 +217,7 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
     def _fit_view(self):
         if self._view_cube is not None:
             self._view_cube.cancel_animation()
-        if self._displayed_shape is not None:
+        if self._displayed_shape is not None and any(row[3] for row in self._entity_snapshot):
             self._view.FitAll(0.12, False)
             self._view.ZFitAll()
 
@@ -223,29 +228,81 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
         self._context.ClearDetected(False)
         self._rotation_blocked = False
         self._rotation_reported = False
-        if self._presentation is not None:
-            self._context.Remove(self._presentation, False)
-        self._presentation = None
+        self._context.ClearSelected(False)
+        for presentation in self._presentations.values():
+            self._context.Remove(presentation, False)
+        self._presentations = {}
+        self._applied_entities = None
         self._displayed_shape = None
         if self._shape is not None and not self._shape.IsNull():
             # AIS triangulates its input. Give it a view-owned copy so rendering
             # and STEP export never modify/read the same triangulation in parallel.
             display_shape = self._prepared_shape
+            copier = None
             if display_shape is None:
-                display_shape = BRepBuilderAPI_Copy(self._shape, True, False).Shape()
-            self._presentation = AIS_ColoredShape(display_shape) if self._appearance else AIS_Shape(display_shape)
-            if self._prepared_shape is not None:
-                self._presentation.Attributes().SetAutoTriangulation(False)
-            self._presentation.SetColor(self._color(128, 105, 206))
-            if self._appearance:
-                for target, rgb in appearance_targets(display_shape, self._appearance, for_display=True):
-                    color = Quantity_Color(*rgb, Quantity_TypeOfColor.Quantity_TOC_sRGB)
-                    self._presentation.SetCustomColor(target, color)
-            self._presentation.Attributes().SetFaceBoundaryDraw(True)
-            self._context.Display(self._presentation, AIS_DisplayMode.AIS_Shaded, 0, False)
+                copier = BRepBuilderAPI_Copy(self._shape, True, False)
+                display_shape = copier.Shape()
+            displays = shape_map(display_shape)
+            originals = shape_map(self._shape) if copier is not None else None
+            styles = {displays.FindIndex(target): rgb for target, rgb in
+                      appearance_targets(display_shape, self._appearance, for_display=True)}
+            effective_colors = {}
+            pending = [(display_shape, None)]
+            while pending:
+                current, inherited = pending.pop()
+                index = displays.FindIndex(current)
+                if index in effective_colors:
+                    continue
+                color = styles.get(index, inherited)
+                effective_colors[index] = color
+                children = TopoDS_Iterator(current)
+                while children.More():
+                    pending.append((children.Value(), color))
+                    children.Next()
+            for node_id, shape_index, display_index, visible, selected in self._entity_snapshot:
+                part = (copier.ModifiedShape(originals.FindKey(shape_index)) if copier is not None
+                        else displays.FindKey(display_index))
+                presentation = AIS_ColoredShape(part) if self._appearance else AIS_Shape(part)
+                if self._prepared_shape is not None:
+                    presentation.Attributes().SetAutoTriangulation(False)
+                rgb = effective_colors.get(displays.FindIndex(part))
+                presentation.SetColor(Quantity_Color(*rgb, Quantity_TypeOfColor.Quantity_TOC_sRGB)
+                                      if rgb is not None else self._color(128, 105, 206))
+                if self._appearance:
+                    part_shapes = shape_map(part)
+                    for index in range(1, part_shapes.Extent() + 1):
+                        target = part_shapes.FindKey(index)
+                        rgb = styles.get(displays.FindIndex(target))
+                        if rgb is not None:
+                            presentation.SetCustomColor(target, Quantity_Color(*rgb, Quantity_TypeOfColor.Quantity_TOC_sRGB))
+                presentation.Attributes().SetFaceBoundaryDraw(True)
+                presentation.SetDisplayMode(AIS_DisplayMode.AIS_Shaded)
+                self._context.Display(presentation, AIS_DisplayMode.AIS_Shaded, 0, False)
+                self._presentations[node_id] = presentation
             self._displayed_shape = self._shape
+            self._apply_entity_state()
             self._set_projection(self._view_mode)
             self._fit_view()
+
+    def _apply_entity_state(self):
+        if self._entity_snapshot == self._applied_entities:
+            return
+        self._context.ClearDetected(False)
+        self._context.ClearSelected(False)
+        for node_id, shape_index, display_index, visible, selected in self._entity_snapshot:
+            presentation = self._presentations.get(node_id)
+            if presentation is None:
+                continue
+            if visible:
+                if not self._context.IsDisplayed(presentation):
+                    # The context defaults to wireframe; restore the shaded
+                    # presentation explicitly after Erase, including selection.
+                    self._context.Display(presentation, AIS_DisplayMode.AIS_Shaded, 0, False)
+                if selected:
+                    self._context.AddOrRemoveSelected(presentation, False)
+            else:
+                self._context.Erase(presentation, False)
+        self._applied_entities = self._entity_snapshot
 
     def _detect_at(self, position):
         x, y = (round(value * self._pixel_ratio) for value in position)
@@ -266,15 +323,21 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             elif command == "hover_clear":
                 self._context.ClearDetected(False)
             elif self._displayed_shape is not None:
-                if command in {"hover", "select", "double_click"}:
-                    cube_hit = self._detect_at(arguments)
+                if command in {"hover", "pick", "double_click"}:
+                    cube_hit = self._detect_at(arguments[:2])
                     if command != "hover":
-                        if cube_hit and self._view_cube.handle_click():
+                        if cube_hit and command == "pick" and arguments[3]:
+                            self._report_pick(self._shape, "", False, True, *arguments[:2])
+                        elif cube_hit and self._view_cube.handle_click():
                             self._report_navigation()
                         elif command == "double_click":
                             self._fit_view()
-                        else:
-                            self._context.SelectDetected(AIS_SelectionScheme.AIS_SelectionScheme_Replace)
+                        elif command == "pick":
+                            x, y, additive, context = arguments
+                            detected = self._context.DetectedInteractive() if self._context.HasDetected() else None
+                            node_id = next((node_id for node_id, presentation in self._presentations.items()
+                                            if presentation == detected), "")
+                            self._report_pick(self._shape, node_id, additive, context, x, y)
                 elif command == "rotate_start":
                     # Decide from the original press position on the render
                     # thread; surrounding blank space must remain draggable.
@@ -317,6 +380,7 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
             # Qt and OCCT cache GL state independently. Clear Qt's drawing state.
             self._reset_gl_state()
             self._update_shape()
+            self._apply_entity_state()
             self._apply_commands()
             animating = self._view_cube.update_animation()
             self._view.Redraw()
@@ -384,7 +448,9 @@ class OcctRenderer(QQuickFramebufferObject.Renderer):
                 cleanup_function(*arguments)
             except Exception:
                 logging.getLogger(__name__).debug("OCCT resource cleanup", exc_info=True)
-        self._presentation = None
+        self._presentations = {}
+        self._entity_snapshot = ()
+        self._applied_entities = None
         self._view_cube = None
         self._displayed_shape = None
         self._prepared_shape = None
