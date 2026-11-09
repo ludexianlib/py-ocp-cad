@@ -10,22 +10,51 @@ Menu {
     padding: 6
     font.family: Theme.font_family
     font.pixelSize: 12
+    property real slide_offset: 0
 
     function open_at(source_item, mouse_x, mouse_y) {
         const position = source_item.mapToItem(root.parent, mouse_x, mouse_y)
         root.popup(position.x, position.y)
     }
 
+    contentItem: ListView {
+        implicitHeight: contentHeight
+        model: root.contentModel
+        interactive: Window.window
+                     ? contentHeight + root.topPadding + root.bottomPadding > root.height
+                     : false
+        clip: true
+        currentIndex: root.currentIndex
+        transform: Translate { y: root.slide_offset }
+
+        ScrollIndicator.vertical: ScrollIndicator {}
+    }
+
     background: Rectangle {
+        id: menu_background
         radius: 12
         color: Theme.surface
         border.color: Theme.line
-        Rectangle {
+        transform: Translate { y: root.slide_offset }
+        Canvas {
+            anchors.fill: parent
+            anchors.margins: -24
             z: -1
-            x: -3; y: 3
-            width: parent.width + 6; height: parent.height + 3
-            radius: 14
-            color: "#1025253f"
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.reset()
+                ctx.clearRect(0, 0, width, height)
+                ctx.shadowColor = "rgba(37, 37, 63, 0.16)"
+                ctx.shadowBlur = 16
+                ctx.shadowOffsetY = 4
+                ctx.fillStyle = menu_background.color
+                ctx.beginPath()
+                ctx.roundedRect(24, 24, menu_background.width, menu_background.height,
+                                menu_background.radius, menu_background.radius)
+                ctx.fill()
+            }
         }
     }
 
@@ -76,9 +105,9 @@ Menu {
     }
     enter: Transition {
         ParallelAnimation {
-            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
-            NumberAnimation { property: "scale"; from: 0.96; to: 1; duration: 150; easing.type: Easing.OutCubic }
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 180; easing.type: Easing.OutCubic }
+            NumberAnimation { target: root; property: "slide_offset"; from: -8; to: 0; duration: 180; easing.type: Easing.OutCubic }
         }
     }
-    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 110 } }
+    exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 120; easing.type: Easing.InCubic } }
 }

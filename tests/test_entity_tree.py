@@ -241,6 +241,80 @@ class EntityAdapterTests(unittest.TestCase):
         model.set_tree(None)
         self.assertEqual(model.rowCount(), 0)
 
+    def test_reveal_expands_ancestors_without_resetting_selection_or_siblings(self):
+        document, tool, labels, shape = assembly_document()
+        tree = EntityTree(extract_step_tree(shape, labels, tool))
+        target_id = next(node_id for node_id, node in tree.leaves.items() if node["name"] == "Inner bolt")
+        other_id = next(node_id for node_id, node in tree.leaves.items() if node["name"] == "Left bolt")
+        tree.select(other_id)
+        tree.hide_selected()
+        snapshot = tree.snapshot()
+        model = EntityTreeModel()
+        model.set_tree(tree)
+        root_id = tree.metadata["root"]["node_id"]
+        branch_id = model._parent_ids[target_id]
+        # Keep this unrelated branch expanded while revealing a collapsed sibling.
+        model.toggle_expanded(branch_id)
+        model.toggle_expanded(root_id)
+        self.assertEqual(model.rowCount(), 1)
+        inserted = []
+        reset = []
+        model.rowsInserted.connect(lambda parent, first, last: inserted.append((first, last)))
+        model.modelReset.connect(lambda: reset.append(True))
+        row = model.reveal_node(other_id)
+        role = next(role for role, name in model.roleNames().items() if name == b"node_id")
+        self.assertEqual(model.data(model.index(row), role), other_id)
+        self.assertIn(branch_id, model._expanded_ids)
+        self.assertEqual(model.data(model.index(model.reveal_node(target_id)), role), target_id)
+        self.assertEqual(tree.snapshot(), snapshot)
+        self.assertTrue(inserted)
+        self.assertEqual(reset, [])
+        inserted.clear()
+        self.assertEqual(model.reveal_node(other_id), row)
+        self.assertEqual(inserted, [])
+        self.assertEqual(model.reveal_node("missing"), -1)
+        model.set_tree(None)
+        self.assertEqual(model.reveal_node(target_id), -1)
+
+    def test_reveal_distinguishes_repeated_geometry_occurrences(self):
+        document, tool, labels, shape = assembly_document(coincident=True)
+        tree = EntityTree(extract_step_tree(shape, labels, tool))
+        model = EntityTreeModel()
+        model.set_tree(tree)
+        target_id = next(node_id for node_id, node in tree.leaves.items() if node["name"] == "Inner bolt")
+        parent_id = model._parent_ids[target_id]
+        self.assertNotIn(parent_id, model._expanded_ids)
+        row = model.reveal_node(target_id)
+        self.assertIn(parent_id, model._expanded_ids)
+        role = next(role for role, name in model.roleNames().items() if name == b"node_id")
+        self.assertEqual(model.data(model.index(row), role), target_id)
+        rows = {model.reveal_node(node_id) for node_id in tree.leaves}
+        self.assertEqual(len(rows), 3)
+
+    def test_only_selected_viewport_entities_request_tree_focus(self):
+        controller = CadController()
+        tree = controller.active_entities
+        node_id = next(iter(tree.leaves))
+        requests = []
+        controller.entity_focus_requested.connect(requests.append)
+        controller.select_entity(node_id, False, False)
+        self.assertEqual(requests, [])
+        controller.select_entity_from_viewport(node_id, False, False)
+        controller.select_entity_from_viewport(node_id, False, True)
+        self.assertEqual(requests, [node_id, node_id])
+        requests.clear()
+        controller.select_entity_from_viewport(node_id, True, False)
+        controller.select_entity_from_viewport("", False, False)
+        controller.select_entity_from_viewport("", False, True)
+        controller.select_entity_from_viewport("missing", False, False)
+        self.assertEqual(requests, [])
+        self.assertEqual(tree.selected_ids, set())
+        controller._loading = True
+        controller.select_entity_from_viewport(node_id, False, False)
+        self.assertEqual(requests, [])
+        self.assertEqual(tree.selected_ids, set())
+        controller.deleteLater()
+
     def test_failed_import_restores_previous_selection_and_visibility(self):
         controller = CadController()
         previous = controller._model.active_record

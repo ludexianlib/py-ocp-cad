@@ -12,6 +12,7 @@ class EntityTreeModel(QAbstractListModel):
         self._tree = None
         self._rows = []
         self._expanded_ids = set()
+        self._parent_ids = {}
 
     def roleNames(self):
         return {int(Qt.ItemDataRole.UserRole) + index: name.encode() for index, name in enumerate(self.role_names)}
@@ -51,8 +52,11 @@ class EntityTreeModel(QAbstractListModel):
         self.beginResetModel()
         self._tree = tree
         self._expanded_ids = set()
+        self._parent_ids = {}
         if tree is not None:
             root = tree.metadata["root"]
+            self._parent_ids = {child["node_id"]: node["node_id"]
+                                for node in tree.nodes.values() for child in node["children"]}
             self._expanded_ids = {root["node_id"]} | {child["node_id"] for child in root["children"]}
             self._rows = self._flatten(root, 0)
         else:
@@ -62,6 +66,21 @@ class EntityTreeModel(QAbstractListModel):
     def refresh_states(self):
         if self._rows:
             self.dataChanged.emit(self.index(0), self.index(len(self._rows) - 1), [])
+
+    @pyqtSlot(str, result=int)
+    def reveal_node(self, node_id):
+        """Expand the occurrence's ancestors and return its visible row."""
+        if self._tree is None or node_id not in self._tree.nodes:
+            return -1
+        ancestors = []
+        parent_id = self._parent_ids.get(node_id)
+        while parent_id is not None:
+            ancestors.append(parent_id)
+            parent_id = self._parent_ids.get(parent_id)
+        for ancestor_id in reversed(ancestors):
+            if ancestor_id not in self._expanded_ids:
+                self.toggle_expanded(ancestor_id)
+        return next((row for row, (node, _) in enumerate(self._rows) if node["node_id"] == node_id), -1)
 
     @pyqtSlot(str)
     def toggle_expanded(self, node_id):

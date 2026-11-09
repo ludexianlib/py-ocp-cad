@@ -10,6 +10,41 @@ Card {
     objectName: "entity_tree_panel"
     padding: 16
 
+    function reveal_entity(node_id) {
+        reveal_scroll.stop()
+        entity_list.cancelFlick()
+        const row = root.cad_controller.entity_tree_model.reveal_node(node_id)
+        if (row < 0) return
+        entity_list.forceLayout()
+        const previous_y = entity_list.contentY
+        entity_list.positionViewAtIndex(row, ListView.Contain)
+        const target_y = entity_list.contentY
+        if (Math.abs(target_y - previous_y) < 0.5) return
+        entity_list.contentY = previous_y
+        reveal_scroll.from = previous_y
+        reveal_scroll.to = target_y
+        reveal_scroll.start()
+    }
+
+    Connections {
+        target: root.cad_controller
+        function onEntity_focus_requested(node_id) { root.reveal_entity(node_id) }
+    }
+
+    Connections {
+        target: root.cad_controller.entity_tree_model
+        function onModelAboutToBeReset() { reveal_scroll.stop() }
+        function onRowsAboutToBeRemoved() { reveal_scroll.stop() }
+    }
+
+    NumberAnimation {
+        id: reveal_scroll
+        target: entity_list
+        property: "contentY"
+        duration: 180
+        easing.type: Easing.OutCubic
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 10
@@ -48,11 +83,16 @@ Card {
             objectName: "entity_tree_list"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.rightMargin: -8
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             model: root.cad_controller.entity_tree_model
             spacing: 3
-            ScrollBar.vertical: ScrollBar { }
+            onMovementStarted: reveal_scroll.stop()
+            ScrollBar.vertical: ScrollBar {
+                objectName: "entity_tree_scrollbar"
+                onPressedChanged: if (pressed) reveal_scroll.stop()
+            }
             delegate: Rectangle {
                 id: entity_row
                 required property string node_id
@@ -66,7 +106,7 @@ Card {
                 required property bool is_visible
                 required property bool is_partly_visible
                 objectName: "entity_row_" + node_id
-                width: entity_list.width
+                width: Math.max(0, entity_list.width - 8)
                 height: 34
                 radius: 8
                 color: Theme.surface

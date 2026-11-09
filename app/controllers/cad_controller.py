@@ -15,6 +15,7 @@ class CadController(QObject):
     loading_changed = pyqtSignal()
     notice_requested = pyqtSignal(str, bool)
     entity_state_changed = pyqtSignal()
+    entity_focus_requested = pyqtSignal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -101,6 +102,15 @@ class CadController(QObject):
         if tree is not None and not self._loading:
             tree.select(node_id, additive, context)
             self._notify_entities()
+
+    @pyqtSlot(str, bool, bool)
+    def select_entity_from_viewport(self, node_id, additive, context):
+        tree = self.active_entities
+        if tree is None or self._loading:
+            return
+        self.select_entity(node_id, additive, context)
+        if node_id in tree.selected_ids:
+            self.entity_focus_requested.emit(node_id)
 
     @pyqtSlot()
     def hide_selected_entities(self):

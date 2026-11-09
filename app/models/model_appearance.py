@@ -3,6 +3,8 @@
 import math
 from pathlib import Path
 
+from app.models.step_encoding import prepared_step_stream
+
 
 PALETTE = (
     (0.43, 0.55, 0.74), (0.56, 0.50, 0.72), (0.39, 0.65, 0.58),
@@ -42,8 +44,9 @@ def read_step_model(path, notify, *, include_entities=False):
     reader.SetPropsMode(False)
     reader.SetGDTMode(False)
     notify("phase", text="正在读取文件与颜色…")
-    if reader.ReadFile(str(path)) != IFSelect_RetDone:
-        raise ValueError("无法读取 STEP 文件，请检查文件格式是否正确。")
+    with prepared_step_stream(path) as stream:
+        if reader.ReadStream(str(path), stream) != IFSelect_RetDone:
+            raise ValueError("无法读取 STEP 文件，请检查文件格式是否正确。")
     reader.Reader().SetSystemLengthUnit(1.0)
     document = new_document()
     notify("phase", text="正在转换模型与外观…")

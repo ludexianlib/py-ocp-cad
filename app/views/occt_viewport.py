@@ -107,7 +107,7 @@ class OcctViewport(QQuickFramebufferObject):
     def _apply_pick(self, shape, node_id, additive, context, x, y):
         if self._controller is None or shape is not self._shape or self._controller.loading:
             return
-        self._controller.select_entity(node_id, additive, context)
+        self._controller.select_entity_from_viewport(node_id, additive, context)
         if context:
             self.context_menu_requested.emit(x, y)
 
