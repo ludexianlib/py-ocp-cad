@@ -34,10 +34,6 @@ class CadController(QObject):
         self._pending_import = None
         self.create_box(40, 30, 10)
 
-    @pyqtProperty(int, notify=state_changed)
-    def model_count(self) -> int:
-        return len(self._model.records)
-
     @pyqtProperty(bool, notify=state_changed)
     def has_model(self) -> bool:
         return self._model.active_record is not None
@@ -78,10 +74,6 @@ class CadController(QObject):
     @pyqtProperty(int, notify=loading_changed)
     def loading_elapsed_seconds(self):
         return self._loading_elapsed_seconds
-
-    @pyqtProperty("QVariantList", notify=state_changed)
-    def models(self) -> list[dict]:
-        return [record.to_summary() for record in self._model.records]
 
     @pyqtProperty("QVariantList", notify=state_changed)
     def recent_actions(self) -> list[dict]:
@@ -128,17 +120,7 @@ class CadController(QObject):
         try:
             record = self._model.create_box(length, width, height)
             self._record_action("创建模型", record.name + " · " + record.to_summary()["dimensions_text"])
-            return self._success(f"已创建 {record.name}，体积 {record.volume:,.3f} mm³。")
-        except Exception as error:
-            return self._failure(error)
-
-    @pyqtSlot(str, result=bool)
-    def select_model(self, model_id: str) -> bool:
-        if self._loading:
-            return self._failure(ValueError("请等待当前模型加载完成。"))
-        try:
-            record = self._model.select_model(model_id)
-            return self._success(f"当前模型：{record.name}。")
+            return self._success(f"已创建 {record.name}。")
         except Exception as error:
             return self._failure(error)
 
@@ -168,9 +150,7 @@ class CadController(QObject):
         except Exception as error:
             return self._failure(error)
 
-        previous_record = self._model.active_record
-        state = {"task": task, "previous_id": previous_record.model_id if previous_record else "",
-                 "model_id": "", "statistics": None}
+        state = {"task": task, "previous_record": self._model.active_record, "model_id": ""}
         self._pending_import = state
         self._loading = True
         self._loading_filename = path.name
@@ -182,7 +162,6 @@ class CadController(QObject):
         self._import_tasks.add(task)
         task.phase_changed.connect(lambda text: self._set_import_stage(state, text))
         task.prepared.connect(lambda result: self._accept_import(state, result))
-        task.statistics_ready.connect(lambda statistics: self._accept_statistics(state, statistics))
         task.failed.connect(lambda message: self._import_failed(state, message))
         task.finished.connect(lambda: self._release_import_task(task))
         task.start(path)
@@ -201,28 +180,20 @@ class CadController(QObject):
         if self._pending_import is not state:
             return
         try:
-            record = self._model.add_imported_model(result)
+            record = self._model.set_imported_model(result)
             state["model_id"] = record.model_id
-            if state["statistics"] is not None:
-                self._model.update_statistics(record.model_id, state["statistics"])
             self._loading_stage = "正在显示模型…"
             self.loading_changed.emit()
             self.state_changed.emit()
         except Exception as error:
             self._import_failed(state, str(error))
 
-    def _accept_statistics(self, state, statistics):
-        if state.get("discarded"):
-            return
-        state["statistics"] = statistics
-        if state["model_id"]:
-            self._model.update_statistics(state["model_id"], statistics)
-            self.state_changed.emit()
-
     def _finish_loading(self):
         self._loading_elapsed_seconds = self._loading_clock.elapsed() // 1000
         self._loading_timer.stop()
         self._loading = False
+        # Task signal handlers can outlive loading; release their model backup too.
+        self._pending_import["previous_record"] = None
         self._pending_import = None
         self.loading_changed.emit()
 
@@ -241,9 +212,8 @@ class CadController(QObject):
     def _import_failed(self, state, message):
         if self._pending_import is not state:
             return
-        state["discarded"] = True
         if state["model_id"]:
-            self._model.remove_model(state["model_id"], state["previous_id"])
+            self._model.restore_model(state["previous_record"])
         self._finish_loading()
         self._failure(RuntimeError(message))
 

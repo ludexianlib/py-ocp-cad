@@ -23,29 +23,34 @@ PyQt 使用随 Python 包安装的 Qt 运行库，不需要配置系统 Qt 的 C
 
 ## 当前功能
 
-- 工作台 / 模型库导航、模型统计、统一卡片组件及淡入、悬停、弹窗过渡。
-- 根据实际 OCP 几何计算长方体体积与表面积；默认尺寸为 `40 × 30 × 10 mm`。
+- 单工作台布局，预览区随窗口高度伸缩，右侧参数区支持独立滚动。
+- 使用统一卡片组件及淡入、悬停、弹窗过渡，保留通用统计卡片组件供后续复用。
+- 根据尺寸创建长方体；默认尺寸为 `40 × 30 × 10 mm`。
 - 支持 `0.01–10000 mm` 范围内的尺寸输入，界面支持两位小数。
-- 创建多个模型、切换当前模型、导出为 STEP，并显示操作结果。
-- 模型仅保存在当前会话内；关闭前需要保留的模型请导出为 STEP。
+- 支持 STEP 导入、颜色显示与导出，并显示操作结果。
+- 只管理当前模型；创建或成功导入新模型后替换当前模型，导入失败恢复原模型。
+- 模型仅保存在当前会话内；替换模型或关闭程序前，需要保留的模型请先导出为 STEP。
 
-**工作区当前是根据模型尺寸绘制的二维投影示意**，提供等轴测、正视、俯视切换。
-这不是 OCCT 原生三维视口，真实三维旋转和选面仍留待后续接入。
+工作区使用 OCCT 原生三维视口，支持旋转、平移、缩放、适配模型及视图立方体导航。
 
 ## MVC 与组件
 
 ```text
 main.py                            应用启动、字体及 QML 加载
-app/models/cad_model.py             无 Qt 依赖的几何与会话模型
-app/controllers/cad_controller.py   建模、选模型、导出与界面状态接口
+app/models/cad_model.py             无 Qt 依赖的几何与当前模型管理
+app/models/step_importer.py         STEP 读取与显示网格准备
+app/controllers/cad_controller.py   建模、导入导出、失败恢复与界面状态接口
+app/controllers/step_import_task.py 后台导入进程与加载线程
+app/views/occt_viewport.py          QML 三维视口与输入适配
+app/views/occt_renderer.py          OCCT 渲染与显示资源管理
 qml/Main.qml                       工作台布局与组件连接
 qml/components/Theme.qml            颜色、字体、圆角及数字格式
 qml/components/Card.qml             通用卡片与入场动画
-qml/components/MetricCard.qml       统计卡片
-qml/components/Sidebar.qml          左侧导航
+qml/components/MetricCard.qml       可复用统计卡片（当前工作台未使用）
+qml/components/Sidebar.qml          工作台侧栏与操作指南入口
 qml/components/CadToolbar.qml       页面标题与操作
 qml/components/BoxPanel.qml         参数输入
-qml/components/ViewportPanel.qml    尺寸投影预览
+qml/components/ViewportPanel.qml    原生三维预览面板
 ```
 
 Python 模型层不依赖界面框架；控制器通过属性和信号提供数据，QML 负责显示与交互。

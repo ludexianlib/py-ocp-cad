@@ -28,7 +28,6 @@ class PreparedModelLoader(QThread):
 
 class StepImportTask(QObject):
     prepared = pyqtSignal(object)
-    statistics_ready = pyqtSignal(object)
     phase_changed = pyqtSignal(str)
     failed = pyqtSignal(str)
     finished = pyqtSignal()
@@ -80,8 +79,6 @@ class StepImportTask(QObject):
                 self._loader.failed.connect(self._model_load_failed)
                 self._loader.finished.connect(self._finish_if_idle)
                 self._loader.start()
-            elif event_type == "statistics":
-                self.statistics_ready.emit(event)
             elif event_type == "error":
                 self._fail(event.get("message", "STEP 导入失败。"))
 
@@ -120,7 +117,7 @@ class StepImportTask(QObject):
                 logging.getLogger(__name__).warning("STEP import worker: %s", self._error_output)
             self._fail("后台导入任务异常退出。" if exit_code else "STEP 文件中没有可导入的模型。")
         elif exit_code:
-            logging.getLogger(__name__).warning("STEP statistics worker exited: %s", exit_code)
+            logging.getLogger(__name__).warning("STEP import worker exited after preparing geometry: %s", exit_code)
         self._finish_if_idle()
 
     def _finish_if_idle(self):

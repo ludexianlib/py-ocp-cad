@@ -79,27 +79,6 @@ def import_step(source: str | Path, directory: str | Path, notify) -> None:
                 "appearance": appearance}
     (directory / "result.json").write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
     notify("prepared")
-    del mesher, display_shape
-
-    # Statistics do not delay delivering the display geometry to the viewport.
-    try:
-        from OCP.BRepGProp import BRepGProp
-        from OCP.GProp import GProp_GProps
-        from OCP.TopAbs import TopAbs_SOLID
-        from OCP.TopExp import TopExp_Explorer
-
-        area_properties = GProp_GProps()
-        BRepGProp.SurfaceProperties_s(shape, area_properties)
-        area = area_properties.Mass()
-        volume = None
-        if TopExp_Explorer(shape, TopAbs_SOLID).More():
-            volume_properties = GProp_GProps()
-            BRepGProp.VolumeProperties_s(shape, volume_properties, True, False, False)
-            volume = abs(volume_properties.Mass())
-        notify("statistics", volume=volume if volume is None or math.isfinite(volume) else None,
-               surface_area=area if math.isfinite(area) else None)
-    except Exception:
-        notify("statistics", volume=None, surface_area=None)
 
 
 def load_prepared_model(directory: str | Path) -> dict:
