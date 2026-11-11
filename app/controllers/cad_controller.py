@@ -37,7 +37,7 @@ class CadController(QObject):
         self._loading_timer.timeout.connect(self._update_loading_elapsed)
         self._import_tasks = set()
         self._pending_import = None
-        self.create_box(40, 30, 10)
+        self.create_bottle(50, 70, 30)
 
     @pyqtProperty(bool, notify=state_changed)
     def has_model(self) -> bool:
@@ -193,6 +193,17 @@ class CadController(QObject):
             return self._failure(ValueError("请等待当前模型加载完成。"))
         try:
             record = self._model.create_box(length, width, height)
+            self._record_action("创建模型", record.name + " · " + record.to_summary()["dimensions_text"])
+            return self._success(f"已创建 {record.name}。")
+        except Exception as error:
+            return self._failure(error)
+
+    @pyqtSlot(float, float, float, result=bool)
+    def create_bottle(self, width: float, height: float, thickness: float) -> bool:
+        if self._loading:
+            return self._failure(ValueError("请等待当前模型加载完成。"))
+        try:
+            record = self._model.create_bottle(width, height, thickness)
             self._record_action("创建模型", record.name + " · " + record.to_summary()["dimensions_text"])
             return self._success(f"已创建 {record.name}。")
         except Exception as error:

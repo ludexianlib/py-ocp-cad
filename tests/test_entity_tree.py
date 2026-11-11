@@ -331,7 +331,7 @@ class EntityAdapterTests(unittest.TestCase):
                                          "name": "replacement", "source_path": str(source)})
             controller.report_model_displayed(shape, "render failure")
             self.assertIs(controller._model.active_record, previous)
-            self.assertEqual(controller.selected_entity_count, 1)
+            self.assertEqual(controller.selected_entity_count, len(previous.entities.leaves))
             self.assertEqual(controller.active_entities.visible_ids, set())
             self.assertIsNone(state["previous_record"])
             state["task"].prepared.emit({})
