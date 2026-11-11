@@ -1,7 +1,7 @@
 """Startup gates: loading stages, viewport readiness and a subsequent frame."""
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from PyQt6.QtCore import QCoreApplication, QObject, QPoint, QRect, pyqtProperty, pyqtSignal
 
@@ -43,6 +43,9 @@ class TestWindow(QObject):
         self.selected_screen = None
         self.position = None
         self.placement_events = []
+        self.persistent_graphics = True
+        self.persistent_scene_graph = True
+        self.graphics_when_hidden = None
 
     def findChild(self, _kind, _name):
         return self.viewport
@@ -50,8 +53,18 @@ class TestWindow(QObject):
     def update(self):
         pass
 
+    def setPersistentGraphics(self, persistent):
+        self.persistent_graphics = persistent
+
+    def setPersistentSceneGraph(self, persistent):
+        self.persistent_scene_graph = persistent
+
     def hide(self):
+        self.graphics_when_hidden = (self.persistent_graphics, self.persistent_scene_graph)
         self.hidden = True
+
+    def close(self):
+        self.hide()
 
     def width(self):
         return self._width
@@ -173,6 +186,25 @@ class StartupTests(unittest.TestCase):
         self.assertIs(self.window.selected_screen, primary)
         self.assertEqual(self.window.position, QPoint(380, -930))
 
+    def test_loading_waits_for_progress_animation_and_schedules_only_once(self):
+        splash = TestWindow(540, 330)
+        splash.setProperty("progress_animating", True)
+        self.startup._splash_window = splash
+        self.startup._waiting_for_stage = True
+        self.startup.advance(35, "Loading modules")
+
+        with patch("app.application.startup_controller.QTimer.singleShot") as schedule:
+            self.startup._on_splash_frame()
+            self.startup._on_splash_frame()
+            schedule.assert_not_called()
+            self.assertTrue(self.startup._waiting_for_stage)
+
+            splash.setProperty("progress_animating", False)
+            self.startup._on_splash_frame()
+            self.startup._on_splash_frame()
+            schedule.assert_called_once_with(0, self.startup._next_stage)
+            self.assertFalse(self.startup._waiting_for_stage)
+
     def test_qml_load_and_early_frames_do_not_complete_startup(self):
         self.finish_loading()
         self.swap_frame()
@@ -238,8 +270,32 @@ class StartupTests(unittest.TestCase):
         self.startup.finish_splash()
         self.startup.finish_splash()
         self.assertEqual(dismissed, [(True, True, True)])
-        engine.deleteLater.assert_called_once()
+        engine.deleteLater.assert_not_called()
+        self.assertEqual(splash.graphics_when_hidden, (False, False))
+        self.assertIs(self.startup._splash_engine, engine)
+        self.assertIs(self.startup._splash_window, splash)
         self.assertTrue(self.window.activated)
+
+    def test_shutdown_releases_main_before_splash_and_is_idempotent(self):
+        cleanup = Mock()
+        main_engine, splash_engine = Mock(), Mock()
+        cleanup.attach_mock(main_engine.deleteLater, "main")
+        cleanup.attach_mock(splash_engine.deleteLater, "splash")
+        self.startup.main_engine = main_engine
+        self.startup._splash_engine = splash_engine
+        splash = TestWindow(540, 330)
+        self.startup._splash_window = splash
+
+        self.startup.shutdown()
+        self.startup.shutdown()
+
+        self.assertEqual(cleanup.mock_calls, [call.main(), call.splash()])
+        self.assertTrue(self.window.hidden)
+        self.assertTrue(splash.hidden)
+        self.assertEqual(splash.graphics_when_hidden, (False, False))
+        self.assertIsNone(self.startup.main_engine)
+        self.assertIsNone(self.startup._splash_engine)
+        self.assertIsNone(self.startup._splash_window)
 
     def test_cancel_prevents_late_loading_and_readiness(self):
         exits = []

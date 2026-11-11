@@ -50,7 +50,9 @@ def startup_check(failure=False, secondary=False):
     startup.exit_requested.connect(application.exit)
     state = {"held": False, "waiting_checked": False, "snapshot": False, "dismissed": False,
              "error": None, "failure_checked": False, "exit_posted": False, "cursor_crossed": False,
-             "ready_hidden_checked": False, "fade_checked": False}
+             "ready_hidden_checked": False, "fade_checked": False,
+             "animated_targets": [], "final_progress_animated": False, "full_progress_checked": False}
+    displayed_progress = [0.0]
     progress = [0]
     startup.state_changed.connect(lambda: progress.append(startup.progress))
     startup.splash_dismissed.connect(lambda: state.update(dismissed=True))
@@ -87,6 +89,7 @@ def startup_check(failure=False, secondary=False):
         try:
             steps = _create_engine_steps(application, startup)
             while True:
+                assert not startup._splash_window.property("progress_animating")
                 try:
                     phase = next(steps)
                 except StopIteration as result:
@@ -104,6 +107,23 @@ def startup_check(failure=False, secondary=False):
             visible_content = [window for window in application.topLevelWindows()
                                if window.isVisible() and window.opacity() > 0.001]
             assert len(visible_content) <= 1, "Splash and main window must not appear together"
+            splash = startup._splash_window
+            if not state["dismissed"]:
+                displayed = splash.property("displayed_progress")
+                assert displayed_progress[-1] - 1e-6 <= displayed <= startup.progress + 1e-6
+                displayed_progress.append(displayed)
+                bar = splash.findChild(QQuickItem, "startup_progress")
+                percentage = splash.findChild(QQuickItem, "startup_percentage")
+                assert abs(bar.property("value") - displayed) < 1e-6
+                assert percentage.property("text") == f"{int(displayed)}%"
+                if 0 < displayed < startup.progress and startup.progress not in state["animated_targets"]:
+                    state["animated_targets"].append(startup.progress)
+                if startup.ready:
+                    if displayed < 100:
+                        state["final_progress_animated"] = True
+                        assert splash.opacity() >= 0.99, "Splash must stay opaque until progress reaches 100"
+                    else:
+                        state["full_progress_checked"] = True
             if failure:
                 if not startup.failed:
                     return
@@ -167,6 +187,8 @@ def startup_check(failure=False, secondary=False):
                 assert not window.findChild(QQuickItem, "workspace_content").isEnabled()
                 return
             assert state["fade_checked"], "Main window must fade in after splash dismissal"
+            assert len(state["animated_targets"]) >= 3, state["animated_targets"]
+            assert state["final_progress_animated"] and state["full_progress_checked"]
             assert state["waiting_checked"] and state["snapshot"]
             assert progress == sorted(progress)
             visible = [window for window in application.topLevelWindows() if window.isVisible()]
@@ -182,7 +204,8 @@ def startup_check(failure=False, secondary=False):
             print("SPLASH_CHECK_OK", json.dumps({"progress": progress, "visible_windows": len(visible),
                   "screen": launch_screen.name(), "screen_count": len(screens),
                   "cursor_crossed": state["cursor_crossed"], "transparent_first_frame": state["ready_hidden_checked"],
-                  "main_faded_in": state["fade_checked"]}), flush=True)
+                  "main_faded_in": state["fade_checked"], "animated_targets": state["animated_targets"],
+                  "full_progress_before_fade": state["full_progress_checked"]}), flush=True)
             timer.stop()
             application.quit()
         except Exception as error:
@@ -208,6 +231,7 @@ def startup_check(failure=False, secondary=False):
     assert state["error"] is None, state["error"]
     if failure:
         assert exit_code == 1 and state["exit_posted"]
+        assert state["animated_targets"] == [35], state["animated_targets"]
         assert not messages, messages
         print("SPLASH_FAILURE_CHECK_OK", flush=True)
     else:

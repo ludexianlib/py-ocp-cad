@@ -16,6 +16,31 @@ Window {
     visible: false
     title: "CAD Studio · 正在启动"
     opacity: 0
+    property real displayed_progress: root.startup_controller.progress
+    readonly property bool progress_animating: progress_animation.running
+
+    Behavior on displayed_progress {
+        NumberAnimation {
+            id: progress_animation
+            duration: 220
+            easing.type: Easing.OutCubic
+        }
+    }
+    onProgress_animatingChanged: {
+        if (!progress_animating) {
+            root.update()
+            root.finish_when_ready()
+        }
+    }
+    function finish_when_ready() {
+        if (root.startup_controller.ready && !root.progress_animating
+                && root.displayed_progress >= 100 && !finish_animation.running
+                && !root.startup_controller.workspace_visible) {
+            enter_animation.stop()
+            root.opacity = 1
+            finish_animation.start()
+        }
+    }
     onVisibleChanged: {
         if (visible && !startup_controller.ready)
             enter_animation.start()
@@ -61,14 +86,14 @@ Window {
             RowLayout {
                 Layout.fillWidth: true
                 Label { objectName: "startup_stage"; text: root.startup_controller.stage_text; color: root.startup_controller.failed ? Theme.error : Theme.ink; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
-                Label { objectName: "startup_percentage"; text: root.startup_controller.progress + "%"; color: Theme.primary; font.pixelSize: 13; font.weight: Font.DemiBold }
+                Label { objectName: "startup_percentage"; text: Math.floor(root.displayed_progress) + "%"; color: Theme.primary; font.pixelSize: 13; font.weight: Font.DemiBold }
             }
             ProgressBar {
                 id: progress_bar
                 objectName: "startup_progress"
                 Layout.fillWidth: true
                 from: 0; to: 100
-                value: root.startup_controller.progress
+                value: root.displayed_progress
                 implicitHeight: 7
                 padding: 0
                 background: Rectangle { implicitHeight: 7; radius: 4; color: Theme.primary_soft }
@@ -107,12 +132,6 @@ Window {
     }
     Connections {
         target: root.startup_controller
-        function onState_changed() {
-            if (root.startup_controller.ready && !finish_animation.running) {
-                enter_animation.stop()
-                root.opacity = 1
-                finish_animation.start()
-            }
-        }
+        function onState_changed() { root.finish_when_ready() }
     }
 }

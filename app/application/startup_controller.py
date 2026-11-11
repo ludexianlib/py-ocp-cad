@@ -109,6 +109,9 @@ class StartupController(QObject):
         if self._waiting_for_stage and not self.failed and not self._cancelled:
             if self._progress == 0 and self._splash_window.property("opacity") < 0.99:
                 return
+            # Let the displayed progress reach its target before blocking work.
+            if self._splash_window.property("progress_animating"):
+                return
             self._waiting_for_stage = False
             QTimer.singleShot(0, self._next_stage)
 
@@ -207,11 +210,14 @@ class StartupController(QObject):
         if not self._ready or self._dismissed or self._cancelled:
             return
         if self._splash_window is not None:
+            # Release the splash context on hide, before its native window dies.
+            # Intel WGL can block when a hidden window retains that context.
+            self._splash_window.setPersistentGraphics(False)
+            self._splash_window.setPersistentSceneGraph(False)
             self._splash_window.hide()
         self._dismissed = True
-        if self._splash_engine is not None:
-            self._splash_engine.deleteLater()
-            self._splash_engine = self._splash_window = None
+        # Keep the hidden splash engine alive until the main scene graph stops.
+        # Destroying it during the Windows workspace reveal can block Qt.
         if self._window is not None:
             self._disconnect_window()
             self._window.raise_()
@@ -244,7 +250,14 @@ class StartupController(QObject):
         self._disconnect_window()
         if self._steps is not None:
             self._steps.close()
-        for engine in (self._splash_engine, self.main_engine):
+        if self._splash_window is not None:
+            self._splash_window.setPersistentGraphics(False)
+            self._splash_window.setPersistentSceneGraph(False)
+        for window in (self._window, self._splash_window):
+            if window is not None:
+                window.close()
+        self._window = self._viewport = None
+        for engine in (self.main_engine, self._splash_engine):
             if engine is not None:
                 engine.deleteLater()
         self._splash_engine = self._splash_window = self.main_engine = None
