@@ -18,8 +18,8 @@ from OCP.Quantity import Quantity_Color, Quantity_TypeOfColor
 from OCP.V3d import V3d_TypeOfOrientation, V3d_Viewer
 from OCP.TopoDS import TopoDS_Iterator
 
-from app.models.model_appearance import appearance_targets, shape_map
-from app.views.view_cube import ViewCube
+from app.cad.models.model_appearance import appearance_targets, shape_map
+from app.cad.views.view_cube import ViewCube
 
 
 class OcctRenderer(QQuickFramebufferObject.Renderer):

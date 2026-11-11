@@ -97,28 +97,66 @@ def configure_fonts(application):
     application.setFont(font)
 
 
-def create_engine(application):
+def _create_engine_steps(application, startup=None):
+    """Yield actual loading stages; the startup controller schedules them by frame."""
     from PyQt6.QtCore import QStandardPaths, QUrl
     from PyQt6.QtQml import QQmlApplicationEngine, QQmlEngine, qmlRegisterType
     from PyQt6.QtQuick import QQuickWindow
 
-    from app.controllers.cad_controller import CadController
-    from app.views.occt_viewport import OcctViewport
+    yield 10, "正在加载 CAD 模块…"
+    from app.cad.controllers.cad_controller import CadController
+    from app.cad.views.occt_viewport import OcctViewport
+
+    yield 35, "正在加载点云工作台…"
+    from app.point_cloud.controllers.point_cloud_controller import PointCloudController
+    from app.point_cloud.views.point_cloud_viewport import PointCloudViewport
 
     configure_graphics()
-    configure_fonts(application)
+    if startup is None:
+        configure_fonts(application)
     qmlRegisterType(OcctViewport, "Cad.Native", 1, 0, "OcctViewport")
+    qmlRegisterType(PointCloudViewport, "PointCloud.Native", 1, 0, "PointCloudViewport")
+
+    yield 50, "正在创建默认模型…"
     controller = CadController(application)
+    if controller.last_error:
+        raise RuntimeError(controller.last_error)
+    cloud_controller = PointCloudController(application)
     QQmlEngine.setObjectOwnership(controller, QQmlEngine.ObjectOwnership.CppOwnership)
+    QQmlEngine.setObjectOwnership(cloud_controller, QQmlEngine.ObjectOwnership.CppOwnership)
+
+    yield 70, "正在加载主界面…"
     engine = QQmlApplicationEngine()
+    engine._workspace_controllers = (controller, cloud_controller)
     documents_path = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
     documents_folder = QUrl.fromLocalFile(documents_path or str(Path.home()))
-    engine.setInitialProperties({"cad_controller": controller, "documents_folder": documents_folder})
+    properties = {"cad_controller": controller, "cloud_controller": cloud_controller,
+                  "documents_folder": documents_folder}
+    if startup is not None:
+        properties["startup_controller"] = startup
+    engine.setInitialProperties(properties)
     qml_path = Path(__file__).resolve().parent / "qml" / "Main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
-    if engine.rootObjects() and not isinstance(engine.rootObjects()[0], QQuickWindow):
+    if not engine.rootObjects():
+        engine.deleteLater()
+        raise RuntimeError("主界面加载失败，请查看运行日志。")
+    if not isinstance(engine.rootObjects()[0], QQuickWindow):
+        engine.deleteLater()
         raise RuntimeError("QML 入口必须创建 Qt Quick 窗口。")
+    if startup is not None:
+        startup.watch_window(engine.rootObjects()[0])
+    yield 90, "正在初始化三维预览…"
     return engine, controller
+
+
+def create_engine(application):
+    """Create the workspace directly for embedding and existing GUI checks."""
+    steps = _create_engine_steps(application)
+    while True:
+        try:
+            next(steps)
+        except StopIteration as result:
+            return result.value
 
 
 def main(argv=None) -> int:
@@ -126,9 +164,13 @@ def main(argv=None) -> int:
     parser.add_argument("--screenshot", type=Path, help="Save the rendered workbench to an image, then exit.")
     options = parser.parse_args(argv)
     configure_diagnostics()
+    startup = None
+    application = None
     try:
         from PyQt6.QtCore import QEvent, QTimer, QtMsgType, qInstallMessageHandler
         from PyQt6.QtGui import QGuiApplication, QIcon
+
+        from app.application.startup_controller import StartupController
 
         def log_qt_message(message_type, context, message):
             level = {
@@ -150,17 +192,25 @@ def main(argv=None) -> int:
         icon_name = "cad-studio.ico" if sys.platform == "win32" else "cad-studio.svg"
         icon_path = Path(__file__).resolve().parent / "assets" / icon_name
         application.setWindowIcon(QIcon(str(icon_path)))
-        engine, controller = create_engine(application)
+        configure_fonts(application)
+        startup = StartupController(application)
+        startup.exit_requested.connect(application.exit)
+        startup.start(_create_engine_steps(application, startup))
     except ModuleNotFoundError as error:
         print(f"缺少依赖：{error.name}。请运行 .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt", file=sys.stderr)
         return 1
-
-    if not engine.rootObjects():
+    except Exception:
+        logging.getLogger(__name__).exception("Could not initialize application startup")
+        if startup is not None:
+            startup.shutdown()
+        if application is not None:
+            application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         return 1
-    window = engine.rootObjects()[0]
+
     if options.screenshot:
         def capture_window():
             try:
+                window = startup.main_engine.rootObjects()[0]
                 options.screenshot.parent.mkdir(parents=True, exist_ok=True)
                 image = window.grabWindow()
                 if image.isNull() or not image.save(str(options.screenshot)):
@@ -172,10 +222,11 @@ def main(argv=None) -> int:
             print(f"界面截图：{options.screenshot}")
             application.quit()
 
-        QTimer.singleShot(1100, capture_window)
+        startup.splash_dismissed.connect(lambda: QTimer.singleShot(0, capture_window))
+        startup.state_changed.connect(lambda: application.exit(1) if startup.failed else None)
     exit_code = application.exec()
     # Destroy QML windows/renderers while QApplication and its GL services live.
-    engine.deleteLater()
+    startup.shutdown()
     application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     logging.getLogger(__name__).info("Workbench exited: code=%s", exit_code)
     return exit_code

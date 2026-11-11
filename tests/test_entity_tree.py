@@ -24,11 +24,11 @@ from OCP.collections import Sequence_TDF_Label
 from OCP.gp import gp_Pln, gp_Pnt, gp_Trsf, gp_Vec
 from PyQt6.QtCore import QCoreApplication, QObject, QUrl, pyqtSignal
 
-from app.controllers.cad_controller import CadController
-from app.controllers.entity_tree_model import EntityTreeModel
-from app.models.entity_tree import EntityTree, extract_step_tree, fallback_tree, load_entity_tree, map_display_entities
-from app.models.model_appearance import new_document, read_step_model, shape_map
-from app.models.step_importer import import_step, load_prepared_model
+from app.cad.controllers.cad_controller import CadController
+from app.cad.controllers.entity_tree_model import EntityTreeModel
+from app.cad.models.entity_tree import EntityTree, extract_step_tree, fallback_tree, load_entity_tree, map_display_entities
+from app.cad.models.model_appearance import new_document, read_step_model, shape_map
+from app.cad.models.step_importer import import_step, load_prepared_model
 
 
 def compound(*shapes):
@@ -320,7 +320,7 @@ class EntityAdapterTests(unittest.TestCase):
         previous = controller._model.active_record
         controller.select_entity("model", False, False)
         controller.hide_selected_entities()
-        with TemporaryDirectory() as directory, patch("app.controllers.cad_controller.StepImportTask", ControlledImportTask):
+        with TemporaryDirectory() as directory, patch("app.cad.controllers.cad_controller.StepImportTask", ControlledImportTask):
             source = Path(directory) / "placeholder.step"
             source.write_text("placeholder")
             self.assertTrue(controller.import_step(QUrl.fromLocalFile(str(source))))

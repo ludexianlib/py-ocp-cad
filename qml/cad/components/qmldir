@@ -1,0 +1,6 @@
+CadToolbar 1.0 CadToolbar.qml
+BoxPanel 1.0 BoxPanel.qml
+ViewportPanel 1.0 ViewportPanel.qml
+EntityTreePanel 1.0 EntityTreePanel.qml
+EntityContextMenu 1.0 EntityContextMenu.qml
+EntityNodeIcon 1.0 EntityNodeIcon.qml

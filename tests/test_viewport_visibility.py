@@ -36,7 +36,7 @@ def render_check():
     from OCP.STEPCAFControl import STEPCAFControl_Writer
     from OCP.STEPControl import STEPControl_AsIs
     from main import configure_graphics, create_engine
-    from app.views.occt_renderer import OcctRenderer
+    from app.cad.views.occt_renderer import OcctRenderer
     from test_entity_tree import assembly_document
 
     configure_graphics()

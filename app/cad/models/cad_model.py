@@ -52,7 +52,7 @@ from OCP.gp import (
     gp_Vec,
 )
 
-from app.models.entity_tree import EntityTree, load_entity_tree
+from app.cad.models.entity_tree import EntityTree, load_entity_tree
 
 
 @dataclass(slots=True)
@@ -319,7 +319,7 @@ class CadModel:
         if not path.parent.is_dir():
             raise ValueError("保存目录不存在。")
         if record.appearance:
-            from app.models.model_appearance import export_colored_step
+            from app.cad.models.model_appearance import export_colored_step
 
             export_colored_step(record.shape, record.appearance, path)
             return path.resolve()

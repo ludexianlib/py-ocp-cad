@@ -4,10 +4,10 @@ from datetime import datetime
 
 from PyQt6.QtCore import QElapsedTimer, QObject, QTimer, Qt, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 
-from app.controllers.step_import_task import StepImportTask
-from app.controllers.entity_tree_model import EntityTreeModel
-from app.models.cad_model import CadModel
-from app.models.step_importer import validate_step_path
+from app.cad.controllers.step_import_task import StepImportTask
+from app.cad.controllers.entity_tree_model import EntityTreeModel
+from app.cad.models.cad_model import CadModel
+from app.cad.models.step_importer import validate_step_path
 
 
 class CadController(QObject):

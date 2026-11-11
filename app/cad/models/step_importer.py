@@ -44,8 +44,8 @@ def import_step(source: str | Path, directory: str | Path, notify) -> None:
     from OCP.BRepBndLib import BRepBndLib
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
-    from app.models.model_appearance import map_display_colors, read_step_model
-    from app.models.entity_tree import map_display_entities
+    from app.cad.models.model_appearance import map_display_colors, read_step_model
+    from app.cad.models.entity_tree import map_display_entities
 
     path = validate_step_path(source)
     directory = Path(directory)
@@ -87,8 +87,8 @@ def load_prepared_model(directory: str | Path) -> dict:
     """Read the compact handoff files in a background thread."""
     from OCP.BinTools import BinTools
     from OCP.TopoDS import TopoDS_Shape
-    from app.models.model_appearance import appearance_targets
-    from app.models.entity_tree import load_entity_tree
+    from app.cad.models.model_appearance import appearance_targets
+    from app.cad.models.entity_tree import load_entity_tree
 
     directory = Path(directory)
     result = json.loads((directory / "result.json").read_text(encoding="utf-8"))

@@ -15,9 +15,9 @@ from OCP.TopLoc import TopLoc_Location
 from OCP.XCAFDoc import XCAFDoc_DocumentTool
 from OCP.gp import gp_Trsf, gp_Vec
 
-from app.models.entity_tree import EntityTree
-from app.models.model_appearance import new_document, read_step_model
-from app.models.step_encoding import detect_step_encoding, prepared_step_stream
+from app.cad.models.entity_tree import EntityTree
+from app.cad.models.model_appearance import new_document, read_step_model
+from app.cad.models.step_encoding import detect_step_encoding, prepared_step_stream
 
 
 class StepEncodingTests(unittest.TestCase):
@@ -38,7 +38,7 @@ class StepEncodingTests(unittest.TestCase):
     def test_gbk_extended_characters_and_chunk_boundaries_preserve_source_bytes(self):
         text = "ISO-10303-21;\r\n'主轴模块╱组';\r\n#1 = CARTESIAN_POINT('',(1.25,-2.5,0.));\r\n"
         original = text.encode("gbk")
-        with TemporaryDirectory() as directory, patch("app.models.step_encoding._CHUNK_SIZE", 1):
+        with TemporaryDirectory() as directory, patch("app.cad.models.step_encoding._CHUNK_SIZE", 1):
             path = Path(directory) / "source.step"
             path.write_bytes(original)
             self.assertEqual(detect_step_encoding(path), "gbk")
@@ -82,7 +82,7 @@ class StepEncodingTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), original)
 
     def test_sample_can_end_inside_utf8_or_gbk_characters(self):
-        with TemporaryDirectory() as directory, patch("app.models.step_encoding._SAMPLE_SIZE", 1):
+        with TemporaryDirectory() as directory, patch("app.cad.models.step_encoding._SAMPLE_SIZE", 1):
             path = Path(directory) / "source.step"
             for encoding in ("utf-8", "gbk"):
                 with self.subTest(encoding=encoding):

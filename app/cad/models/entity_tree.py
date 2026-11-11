@@ -5,7 +5,7 @@ from copy import deepcopy
 from OCP.TopAbs import TopAbs_COMPOUND, TopAbs_COMPSOLID, TopAbs_SOLID, TopAbs_SHELL, TopAbs_FACE, TopAbs_WIRE, TopAbs_EDGE
 from OCP.TopoDS import TopoDS_Iterator
 
-from app.models.model_appearance import shape_map
+from app.cad.models.model_appearance import shape_map
 
 
 def geometry_parts(shape):

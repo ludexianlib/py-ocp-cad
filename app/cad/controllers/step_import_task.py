@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 
 from PyQt6.QtCore import QCoreApplication, QObject, QProcess, QThread, pyqtSignal
 
-from app.models.step_importer import EVENT_PREFIX, load_prepared_model
+from app.cad.models.step_importer import EVENT_PREFIX, load_prepared_model
 
 
 class PreparedModelLoader(QThread):
@@ -36,7 +36,7 @@ class StepImportTask(QObject):
         super().__init__(parent)
         self._directory = TemporaryDirectory(prefix="cad-step-")
         self._process = QProcess(self)
-        self._process.setWorkingDirectory(str(Path(__file__).resolve().parents[2]))
+        self._process.setWorkingDirectory(str(Path(__file__).resolve().parents[3]))
         self._process.readyReadStandardOutput.connect(self._read_output)
         self._process.readyReadStandardError.connect(self._read_error_output)
         self._process.errorOccurred.connect(self._process_error)
@@ -53,7 +53,7 @@ class StepImportTask(QObject):
         QCoreApplication.instance().aboutToQuit.connect(self.stop)
 
     def start(self, source):
-        self._process.start(sys.executable, ["-u", "-m", "app.models.step_importer", str(source), self._directory.name])
+        self._process.start(sys.executable, ["-u", "-m", "app.cad.models.step_importer", str(source), self._directory.name])
 
     def _read_output(self):
         self._buffer += bytes(self._process.readAllStandardOutput())

@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "../../components"
 import QtQuick.Controls
 import QtQuick.Layouts
 import Cad.Native 1.0

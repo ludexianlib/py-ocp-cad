@@ -6,7 +6,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQuick import QQuickFramebufferObject
 
-from app.views.occt_renderer import OcctRenderer
+from app.cad.views.occt_renderer import OcctRenderer
 
 
 class OcctViewport(QQuickFramebufferObject):

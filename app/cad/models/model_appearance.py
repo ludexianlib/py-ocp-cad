@@ -3,7 +3,7 @@
 import math
 from pathlib import Path
 
-from app.models.step_encoding import prepared_step_stream
+from app.cad.models.step_encoding import prepared_step_stream
 
 
 PALETTE = (
@@ -69,7 +69,7 @@ def read_step_model(path, notify, *, include_entities=False):
         raise ValueError("STEP 文件中没有可导入的几何模型。")
     appearance = collect_appearance(shape, labels, shape_tool)
     if include_entities:
-        from app.models.entity_tree import extract_step_tree
+        from app.cad.models.entity_tree import extract_step_tree
 
         return shape, appearance, extract_step_tree(shape, labels, shape_tool, Path(path).stem)
     return shape, appearance

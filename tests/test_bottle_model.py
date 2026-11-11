@@ -12,9 +12,9 @@ from OCP.TopAbs import TopAbs_OUT, TopAbs_SOLID
 from OCP.gp import gp_Pnt
 from PyQt6.QtCore import QCoreApplication
 
-from app.controllers.cad_controller import CadController
-from app.models.cad_model import CadModel
-from app.models.entity_tree import geometry_parts
+from app.cad.controllers.cad_controller import CadController
+from app.cad.models.cad_model import CadModel
+from app.cad.models.entity_tree import geometry_parts
 
 
 class BottleModelTests(unittest.TestCase):
