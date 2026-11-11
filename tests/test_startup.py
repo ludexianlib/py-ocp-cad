@@ -1,8 +1,9 @@
 """Startup gates: loading stages, viewport readiness and a subsequent frame."""
 
 import unittest
+from unittest.mock import Mock, patch
 
-from PyQt6.QtCore import QCoreApplication, QObject, pyqtProperty, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QObject, QPoint, QRect, pyqtProperty, pyqtSignal
 
 from app.application.startup_controller import StartupController
 
@@ -33,11 +34,15 @@ class TestWindow(QObject):
     sceneGraphError = pyqtSignal(int, str)
     visibleChanged = pyqtSignal(bool)
 
-    def __init__(self):
+    def __init__(self, width=1360, height=900):
         super().__init__()
         self.viewport = TestViewport()
         self.hidden = False
         self.activated = False
+        self._width, self._height = width, height
+        self.selected_screen = None
+        self.position = None
+        self.placement_events = []
 
     def findChild(self, _kind, _name):
         return self.viewport
@@ -47,6 +52,24 @@ class TestWindow(QObject):
 
     def hide(self):
         self.hidden = True
+
+    def width(self):
+        return self._width
+
+    def height(self):
+        return self._height
+
+    def setScreen(self, screen):
+        self.selected_screen = screen
+        self.placement_events.append("screen")
+
+    def setPosition(self, x, y):
+        self.position = QPoint(x, y)
+        self.placement_events.append("position")
+
+    def show(self):
+        self.hidden = False
+        self.placement_events.append("show")
 
     def raise_(self):
         pass
@@ -80,6 +103,76 @@ class StartupTests(unittest.TestCase):
         self.window.frameSwapped.emit()
         self.application.processEvents()
 
+    def test_launch_screen_is_reused_after_cursor_moves_before_main_creation(self):
+        primary, secondary = Mock(), Mock()
+        primary.availableGeometry.return_value = QRect(0, 0, 1920, 1040)
+        secondary.availableGeometry.return_value = QRect(-2560, 40, 2560, 1400)
+        splash = TestWindow(540, 330)
+        main_window = TestWindow()
+        engine = Mock()
+        engine.rootObjects.return_value = [splash]
+        with patch("app.application.startup_controller.QGuiApplication") as application, \
+                patch("app.application.startup_controller.QCursor") as cursor, \
+                patch("PyQt6.QtQml.QQmlApplicationEngine", return_value=engine):
+            application.screenAt.return_value = secondary
+            application.screens.return_value = [primary, secondary]
+            application.primaryScreen.return_value = primary
+            cursor.pos.return_value = QPoint(-1200, 600)
+            self.startup.start(step for step in [])
+            application.screenAt.return_value = primary
+            cursor.pos.return_value = QPoint(800, 600)
+            self.startup._disconnect_window()
+            self.startup.watch_window(main_window)
+            application.screenAt.assert_called_once_with(QPoint(-1200, 600))
+            cursor.pos.assert_called_once()
+            application.primaryScreen.assert_not_called()
+        self.assertIs(splash.selected_screen, secondary)
+        self.assertIs(main_window.selected_screen, secondary)
+        self.assertEqual(splash.position, QPoint(-1550, 575))
+        self.assertEqual(main_window.position, QPoint(-1960, 290))
+        self.assertEqual(splash.placement_events, ["screen", "position", "show"])
+        self.assertEqual(main_window.placement_events, ["screen", "position", "show"])
+
+    def test_cursor_outside_screens_uses_primary_available_area(self):
+        primary = Mock()
+        primary.availableGeometry.return_value = QRect(0, 40, 800, 560)
+        splash = TestWindow(540, 330)
+        engine = Mock()
+        engine.rootObjects.return_value = [splash]
+        with patch("app.application.startup_controller.QGuiApplication") as application, \
+                patch("app.application.startup_controller.QCursor") as cursor, \
+                patch("PyQt6.QtQml.QQmlApplicationEngine", return_value=engine):
+            application.screenAt.return_value = None
+            application.primaryScreen.return_value = primary
+            application.screens.return_value = [primary]
+            cursor.pos.return_value = QPoint(9000, 9000)
+            self.startup.start(step for step in [])
+            self.startup._show_on_launch_screen(self.window)
+        self.assertIs(splash.selected_screen, primary)
+        self.assertEqual(splash.position, QPoint(130, 155))
+        self.assertEqual(self.window.position, QPoint(0, 40))
+
+    def test_removed_launch_screen_falls_back_to_primary_without_rereading_cursor(self):
+        primary, removed = Mock(), Mock()
+        primary.availableGeometry.return_value = QRect(100, -1000, 1920, 1040)
+        removed.availableGeometry.return_value = QRect(-1920, 0, 1920, 1040)
+        splash = TestWindow(540, 330)
+        engine = Mock()
+        engine.rootObjects.return_value = [splash]
+        with patch("app.application.startup_controller.QGuiApplication") as application, \
+                patch("app.application.startup_controller.QCursor") as cursor, \
+                patch("PyQt6.QtQml.QQmlApplicationEngine", return_value=engine):
+            application.screenAt.return_value = removed
+            application.primaryScreen.return_value = primary
+            application.screens.return_value = [primary, removed]
+            self.startup.start(step for step in [])
+            application.screens.return_value = [primary]
+            self.startup._show_on_launch_screen(self.window)
+            cursor.pos.assert_called_once()
+            application.screenAt.assert_called_once()
+        self.assertIs(self.window.selected_screen, primary)
+        self.assertEqual(self.window.position, QPoint(380, -930))
+
     def test_qml_load_and_early_frames_do_not_complete_startup(self):
         self.finish_loading()
         self.swap_frame()
@@ -90,6 +183,7 @@ class StartupTests(unittest.TestCase):
         self.swap_frame()
         self.assertTrue(self.startup.ready)
         self.assertEqual(self.startup.progress, 100)
+        self.assertFalse(self.startup.workspace_visible)
 
     def test_ready_frame_before_loader_return_still_waits_for_loading(self):
         self.window.viewport.report(True)
@@ -116,6 +210,7 @@ class StartupTests(unittest.TestCase):
         self.swap_frame()
         self.startup.advance(100, "完成")
         self.assertFalse(self.startup.ready)
+        self.assertFalse(self.startup.workspace_visible)
         self.assertEqual(self.startup.error_text, "图形初始化失败")
         exits = []
         self.startup.exit_requested.connect(exits.append)
@@ -124,15 +219,26 @@ class StartupTests(unittest.TestCase):
 
     def test_splash_dismissal_requires_completion_and_is_idempotent(self):
         dismissed = []
-        self.startup.splash_dismissed.connect(lambda: dismissed.append(True))
+        splash = TestWindow(540, 330)
+        engine = Mock()
+        self.startup._splash_window = splash
+        self.startup._splash_engine = engine
+        self.startup.splash_dismissed.connect(
+            lambda: dismissed.append((self.startup.workspace_visible, splash.hidden, self.window.activated))
+        )
         self.startup.finish_splash()
         self.assertEqual(dismissed, [])
+        self.assertFalse(self.startup.workspace_visible)
+        self.assertFalse(splash.hidden)
         self.finish_loading()
         self.window.viewport.report(True)
         self.swap_frame()
+        self.assertTrue(self.startup.ready)
+        self.assertFalse(self.startup.workspace_visible)
         self.startup.finish_splash()
         self.startup.finish_splash()
-        self.assertEqual(dismissed, [True])
+        self.assertEqual(dismissed, [(True, True, True)])
+        engine.deleteLater.assert_called_once()
         self.assertTrue(self.window.activated)
 
     def test_cancel_prevents_late_loading_and_readiness(self):
@@ -145,6 +251,7 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(exits, [0])
         self.assertEqual(self.startup.progress, 0)
         self.assertFalse(self.startup.ready)
+        self.assertFalse(self.startup.workspace_visible)
 
     def test_closing_main_window_before_splash_exit_cancels_activation(self):
         self.finish_loading()
@@ -156,6 +263,7 @@ class StartupTests(unittest.TestCase):
         self.startup.finish_splash()
         self.assertEqual(exits, [0])
         self.assertFalse(self.window.activated)
+        self.assertFalse(self.startup.workspace_visible)
 
 
 if __name__ == "__main__":

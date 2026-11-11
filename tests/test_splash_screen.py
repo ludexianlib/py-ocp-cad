@@ -10,7 +10,9 @@ import unittest
 class SplashScreenTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("CAD_RUN_VIEWPORT_TESTS") == "1", "Requires a desktop GPU")
     def test_splash_waits_for_ready_frame_and_handles_failure(self):
-        for mode, marker in (("--render-check", "SPLASH_CHECK_OK"), ("--failure-check", "SPLASH_FAILURE_CHECK_OK")):
+        for mode, marker in (("--render-check", "SPLASH_CHECK_OK"),
+                             ("--secondary-screen-check", "SPLASH_CHECK_OK"),
+                             ("--failure-check", "SPLASH_FAILURE_CHECK_OK")):
             with self.subTest(mode=mode):
                 completed = subprocess.run(
                     [sys.executable, "-X", "utf8", "-B", str(Path(__file__).resolve()), mode],
@@ -21,14 +23,14 @@ class SplashScreenTests(unittest.TestCase):
                 self.assertIn(marker, completed.stdout)
 
 
-def startup_check(failure=False):
+def startup_check(failure=False, secondary=False):
     import json
     import time
 
     project_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(project_root))
     from PyQt6.QtCore import QCoreApplication, QEvent, QPointF, QTimer, Qt, qInstallMessageHandler
-    from PyQt6.QtGui import QGuiApplication, QMouseEvent
+    from PyQt6.QtGui import QCursor, QGuiApplication, QMouseEvent
     from PyQt6.QtQuick import QQuickItem
     from app.application.startup_controller import StartupController
     from main import _create_engine_steps, configure_fonts, configure_graphics
@@ -36,6 +38,10 @@ def startup_check(failure=False):
     configure_graphics()
     application = QGuiApplication([])
     configure_fonts(application)
+    screens = application.screens()
+    launch_screen = screens[min(1, len(screens) - 1)] if secondary else screens[0]
+    other_screen = next((screen for screen in screens if screen != launch_screen), None)
+    original_cursor_position = QCursor.pos()
     messages = []
     qInstallMessageHandler(lambda _kind, _context, message: messages.append(message))
     output = project_root / "out"
@@ -43,16 +49,26 @@ def startup_check(failure=False):
     startup = StartupController(application)
     startup.exit_requested.connect(application.exit)
     state = {"held": False, "waiting_checked": False, "snapshot": False, "dismissed": False,
-             "error": None, "failure_checked": False, "exit_posted": False}
+             "error": None, "failure_checked": False, "exit_posted": False, "cursor_crossed": False,
+             "ready_hidden_checked": False, "fade_checked": False}
     progress = [0]
     startup.state_changed.connect(lambda: progress.append(startup.progress))
     startup.splash_dismissed.connect(lambda: state.update(dismissed=True))
     deadline = time.monotonic() + 25
 
+    def check_screen(window):
+        assert window.screen() == launch_screen, (window.screen().name(), launch_screen.name())
+        assert launch_screen.availableGeometry().contains(window.frameGeometry().center()), window.frameGeometry()
+
     def stages():
         # No workspace dependency has been imported before the splash is visible.
         assert startup._splash_window.isVisible()
         assert startup._splash_window.property("opacity") > 0
+        check_screen(startup._splash_window)
+        if other_screen is not None:
+            QCursor.setPos(other_screen.availableGeometry().center())
+            assert application.screenAt(QCursor.pos()) == other_screen
+            state["cursor_crossed"] = True
         if failure:
             yield 35, "正在加载模块…"
             raise RuntimeError("测试模块加载失败")
@@ -82,18 +98,21 @@ def startup_check(failure=False):
         finally:
             OcctViewport._set_render_state = original
 
-    startup.start(stages())
-
     def advance():
         try:
             assert time.monotonic() < deadline, ("Startup timed out", progress, messages)
+            visible_content = [window for window in application.topLevelWindows()
+                               if window.isVisible() and window.opacity() > 0.001]
+            assert len(visible_content) <= 1, "Splash and main window must not appear together"
             if failure:
                 if not startup.failed:
                     return
                 assert not startup.ready and startup.progress < 100
+                assert not startup.workspace_visible
                 assert startup.error_text == "测试模块加载失败"
                 splash = startup._splash_window
                 assert splash.isVisible()
+                check_screen(splash)
                 if not state["exit_posted"]:
                     button = splash.findChild(QQuickItem, "startup_exit_button")
                     if not button.isVisible():
@@ -121,6 +140,14 @@ def startup_check(failure=False):
                 return
             if startup.failed:
                 raise AssertionError(startup.error_text)
+            if startup._window is not None:
+                check_screen(startup._window)
+                if not state["dismissed"]:
+                    assert startup._window.opacity() == 0, "Main window must remain transparent until splash is hidden"
+                    assert not startup._window.findChild(QQuickItem, "workspace_content").isEnabled()
+                    if startup.ready:
+                        assert startup._viewport.property("render_ready")
+                        state["ready_hidden_checked"] = True
             if state["held"] and not startup.ready:
                 assert startup.progress < 100
                 assert startup._splash_window.isVisible()
@@ -131,6 +158,15 @@ def startup_check(failure=False):
             if not state["dismissed"]:
                 return
             assert startup.ready and startup.progress == 100
+            assert startup.workspace_visible
+            assert state["ready_hidden_checked"]
+            window = startup.main_engine.rootObjects()[0]
+            if window.opacity() < 1:
+                if window.opacity() > 0:
+                    state["fade_checked"] = True
+                assert not window.findChild(QQuickItem, "workspace_content").isEnabled()
+                return
+            assert state["fade_checked"], "Main window must fade in after splash dismissal"
             assert state["waiting_checked"] and state["snapshot"]
             assert progress == sorted(progress)
             visible = [window for window in application.topLevelWindows() if window.isVisible()]
@@ -143,7 +179,10 @@ def startup_check(failure=False):
             assert window.findChild(QQuickItem, "workspace_content").isEnabled()
             assert window.grabWindow().save(str(output / "startup-ready-preview.png"))
             assert not messages, messages
-            print("SPLASH_CHECK_OK", json.dumps({"progress": progress, "visible_windows": len(visible)}), flush=True)
+            print("SPLASH_CHECK_OK", json.dumps({"progress": progress, "visible_windows": len(visible),
+                  "screen": launch_screen.name(), "screen_count": len(screens),
+                  "cursor_crossed": state["cursor_crossed"], "transparent_first_frame": state["ready_hidden_checked"],
+                  "main_faded_in": state["fade_checked"]}), flush=True)
             timer.stop()
             application.quit()
         except Exception as error:
@@ -154,13 +193,18 @@ def startup_check(failure=False):
     timer = QTimer()
     timer.setInterval(30)
     timer.timeout.connect(advance)
-    timer.start()
     try:
+        QCursor.setPos(launch_screen.availableGeometry().center())
+        assert application.screenAt(QCursor.pos()) == launch_screen
+        startup.start(stages())
+        check_screen(startup._splash_window)
+        timer.start()
         exit_code = application.exec()
     finally:
         timer.stop()
         startup.shutdown()
         application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        QCursor.setPos(original_cursor_position)
     assert state["error"] is None, state["error"]
     if failure:
         assert exit_code == 1 and state["exit_posted"]
@@ -171,7 +215,7 @@ def startup_check(failure=False):
 
 
 if __name__ == "__main__":
-    if "--render-check" in sys.argv or "--failure-check" in sys.argv:
-        startup_check("--failure-check" in sys.argv)
+    if any(mode in sys.argv for mode in ("--render-check", "--secondary-screen-check", "--failure-check")):
+        startup_check("--failure-check" in sys.argv, secondary="--secondary-screen-check" in sys.argv)
     else:
         unittest.main()

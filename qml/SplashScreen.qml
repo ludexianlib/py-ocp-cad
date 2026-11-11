@@ -11,14 +11,15 @@ Window {
     required property var startup_controller
     width: 540
     height: 330
-    x: Screen.virtualX + (Screen.width - width) / 2
-    y: Screen.virtualY + (Screen.height - height) / 2
     flags: Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
-    visible: true
+    visible: false
     title: "CAD Studio · 正在启动"
     opacity: 0
-    Component.onCompleted: enter_animation.start()
+    onVisibleChanged: {
+        if (visible && !startup_controller.ready)
+            enter_animation.start()
+    }
     onClosing: {
         if (!startup_controller.ready)
             startup_controller.request_exit()

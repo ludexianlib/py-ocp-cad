@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QTimer, QUrl, Qt, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QCursor, QGuiApplication
 
 
 class StartupController(QObject):
@@ -27,6 +28,7 @@ class StartupController(QObject):
         self._watching_window = False
         self._splash_engine = None
         self._splash_window = None
+        self._launch_screen = None
         self._dismissed = False
         self._cancelled = False
         self.main_engine = None
@@ -51,6 +53,10 @@ class StartupController(QObject):
     def ready(self):
         return self._ready
 
+    @pyqtProperty(bool, notify=splash_dismissed)
+    def workspace_visible(self):
+        return self._dismissed
+
     def advance(self, progress, text):
         if self.failed or self._ready or self._cancelled:
             return
@@ -67,6 +73,7 @@ class StartupController(QObject):
 
         if self._steps is not None or self._splash_engine is not None:
             raise RuntimeError("启动流程已经开始。")
+        self._launch_screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         self._steps = iter(steps)
         QQmlEngine.setObjectOwnership(self, QQmlEngine.ObjectOwnership.CppOwnership)
         self._splash_engine = QQmlApplicationEngine()
@@ -79,7 +86,22 @@ class StartupController(QObject):
         self._splash_window.frameSwapped.connect(self._on_splash_frame, Qt.ConnectionType.QueuedConnection)
         self._splash_window.sceneGraphError.connect(self._on_splash_error, Qt.ConnectionType.QueuedConnection)
         self._waiting_for_stage = True
+        self._show_on_launch_screen(self._splash_window)
         self._splash_window.update()
+
+    def _show_on_launch_screen(self, window):
+        """Place both windows before showing, using the screen chosen at launch."""
+        if self._launch_screen is not None:
+            if self._launch_screen not in QGuiApplication.screens():
+                self._launch_screen = QGuiApplication.primaryScreen()
+            if self._launch_screen is not None:
+                window.setScreen(self._launch_screen)
+                area = self._launch_screen.availableGeometry()
+                window.setPosition(
+                    area.x() + max(0, (area.width() - window.width()) // 2),
+                    area.y() + max(0, (area.height() - window.height()) // 2),
+                )
+        window.show()
 
     @pyqtSlot()
     def _on_splash_frame(self):
@@ -124,6 +146,8 @@ class StartupController(QObject):
         window.visibleChanged.connect(self._on_window_visible)
         self._watching_window = True
         self._on_viewport_state()
+        if not self.failed and not self._cancelled:
+            self._show_on_launch_screen(window)
 
     @pyqtSlot()
     def _on_viewport_state(self):
@@ -182,6 +206,8 @@ class StartupController(QObject):
     def finish_splash(self):
         if not self._ready or self._dismissed or self._cancelled:
             return
+        if self._splash_window is not None:
+            self._splash_window.hide()
         self._dismissed = True
         if self._splash_engine is not None:
             self._splash_engine.deleteLater()

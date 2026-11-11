@@ -18,14 +18,29 @@ ApplicationWindow {
     height: 900
     minimumWidth: 1080
     minimumHeight: 760
-    visible: true
+    visible: !root.startup_controller
+    opacity: root.startup_controller ? 0 : 1
     title: "CAD Studio · 几何工作空间"
     color: Theme.background
     font.family: Theme.font_family
 
+    NumberAnimation {
+        id: reveal_animation
+        target: root
+        property: "opacity"
+        from: 0
+        to: 1
+        duration: 180
+        easing.type: Easing.OutCubic
+    }
+    Connections {
+        target: root.startup_controller
+        function onSplash_dismissed() { reveal_animation.start() }
+    }
+
     RowLayout {
         objectName: "workspace_content"
-        enabled: !root.startup_controller || root.startup_controller.ready
+        enabled: (!root.startup_controller || root.startup_controller.workspace_visible) && !reveal_animation.running
         anchors.fill: parent
         spacing: 0
         Sidebar {
