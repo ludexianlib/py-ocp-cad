@@ -54,8 +54,9 @@ app/cad/views/                               OCCT 渲染、鼠标输入及视图
 app/point_cloud/models/point_cloud_model.py   点云数据和当前文档，无 Qt 依赖
 app/point_cloud/models/point_cloud_io.py      Open3D 文件读取、无效点清理和颜色校验
 app/point_cloud/controllers/                 点云导入任务、显示设置及失败恢复
-app/point_cloud/views/open3d_renderer.py      Open3D 离屏渲染后端和相机计算
-app/point_cloud/views/point_cloud_viewport.py QML 视口适配、输入及渲染请求调度
+app/point_cloud/views/point_cloud_camera.py   点云相机、导航及投影计算
+app/point_cloud/views/point_cloud_renderer.py Qt/OpenGL 点云绘制、GPU 缓冲区和资源释放
+app/point_cloud/views/point_cloud_viewport.py QML 帧缓冲视口适配、鼠标输入和首帧反馈
 qml/Main.qml                                统一主窗口、导航及公共提示
 qml/cad/CadPage.qml                          CAD 页面及 STEP 对话框
 qml/cad/components/                          CAD 工具栏、参数面板、实体树和预览卡片
@@ -65,8 +66,8 @@ qml/components/                             共享主题、卡片、侧栏、提
 ```
 
 两个业务模块各自遵循 MVC，Python 模型层不依赖界面框架；控制器通过属性和信号提供数据，QML 负责显示与交互。
-CAD 使用 OCCT，点云使用 Open3D；两种视口复用同一主窗口，分别管理渲染资源。
-点云 GPU 渲染使用独立后台进程，视口通过后台线程传输图像；按需更新并合并交互请求，隐藏页面暂停绘制。离屏图像回传有额外开销，大规模点云的速度和内存占用需按实际数据与显卡评估。
+CAD 使用 OCCT；点云由 Open3D 在独立进程中读取和处理，Qt/OpenGL 负责显示。两种视口复用同一主窗口，分别管理渲染资源。
+点云通过 QQuickFramebufferObject 直接绘制到 Qt 的 OpenGL 帧缓冲。顶点和颜色在模型变化时上传 GPU，旋转、缩放及显示设置只更新绘制参数；隐藏页面暂停绘制。主进程不加载 Open3D，也不再逐帧回传离屏图像。大规模点云的速度和显存占用需按实际数据与显卡评估。
 函数和变量遵循 `snake_case`，组件类名使用首字母大写的驼峰形式。
 
 ## 命令行示例与界面截图

@@ -2,7 +2,7 @@
 
 import math
 
-from PyQt6.QtCore import QCoreApplication, QObject, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QCoreApplication, QElapsedTimer, QObject, QTimer, Qt, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 
 from app.point_cloud.controllers.point_cloud_import_task import PointCloudImportTask
 from app.point_cloud.models.point_cloud_io import validate_point_cloud_path
@@ -22,6 +22,13 @@ class PointCloudController(QObject):
         self._task = None
         self._pending_record = None
         self._loading = False
+        self._loading_filename = ""
+        self._loading_elapsed_seconds = 0
+        self._loading_clock = QElapsedTimer()
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setInterval(1000)
+        self._loading_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._loading_timer.timeout.connect(self._update_loading_elapsed)
         self._stage_text = ""
         self._last_error = ""
         self._point_size = 3.0
@@ -44,6 +51,14 @@ class PointCloudController(QObject):
     @pyqtProperty(bool, notify=loading_changed)
     def loading(self):
         return self._loading
+
+    @pyqtProperty(str, notify=loading_changed)
+    def loading_filename(self):
+        return self._loading_filename
+
+    @pyqtProperty(int, notify=loading_changed)
+    def loading_elapsed_seconds(self):
+        return self._loading_elapsed_seconds
 
     @pyqtProperty(str, notify=loading_changed)
     def stage_text(self):
@@ -85,6 +100,10 @@ class PointCloudController(QObject):
             self._fail(str(error))
             return False
         self._loading = True
+        self._loading_filename = path.name
+        self._loading_elapsed_seconds = 0
+        self._loading_clock.start()
+        self._loading_timer.start()
         self._stage_text = "正在读取点云…"
         self._last_error = ""
         self.state_changed.emit()
@@ -96,6 +115,17 @@ class PointCloudController(QObject):
         task.finished.connect(self._release_task)
         task.start()
         return True
+
+    def _update_loading_elapsed(self):
+        if self._loading:
+            self._loading_elapsed_seconds = self._loading_clock.elapsed() // 1000
+            self.loading_changed.emit()
+
+    def _finish_loading(self):
+        if self._loading:
+            self._loading_elapsed_seconds = self._loading_clock.elapsed() // 1000
+        self._loading_timer.stop()
+        self._loading = False
 
     def _loaded(self, record):
         if self._stopped:
@@ -113,7 +143,7 @@ class PointCloudController(QObject):
             return
         self._model.adopt(record)
         self._pending_record = None
-        self._loading = False
+        self._finish_loading()
         self._last_error = ""
         self.state_changed.emit()
         self.loading_changed.emit()
@@ -123,7 +153,7 @@ class PointCloudController(QObject):
         if self._stopped:
             return
         self._pending_record = None
-        self._loading = False
+        self._finish_loading()
         self._last_error = message or "点云导入失败。"
         self.state_changed.emit()
         self.loading_changed.emit()
@@ -136,6 +166,10 @@ class PointCloudController(QObject):
 
     def stop(self):
         self._stopped = True
+        was_loading = self._loading
+        self._finish_loading()
+        if was_loading:
+            self.loading_changed.emit()
         if self._task is not None:
             self._task.requestInterruption()
             self._task.wait()

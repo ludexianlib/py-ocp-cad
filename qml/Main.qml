@@ -14,6 +14,8 @@ ApplicationWindow {
     required property url documents_folder
     property var startup_controller: null
     property string active_page: "cad"
+    readonly property bool loading_cad: root.active_page === "cad"
+    readonly property var loading_controller: root.loading_cad ? root.cad_controller : root.cloud_controller
     width: 1360
     height: 900
     minimumWidth: 1080
@@ -76,6 +78,13 @@ ApplicationWindow {
                 onNotice_requested: (message, is_error) => toast_manager.show_toast(message, is_error)
             }
         }
+    }
+    LoadingDialog {
+        loading: root.loading_controller.loading
+        heading_text: root.loading_cad ? "正在加载模型" : "正在加载点云"
+        filename: root.loading_controller.loading_filename
+        stage_text: root.loading_cad ? root.cad_controller.loading_stage : root.cloud_controller.stage_text
+        elapsed_seconds: root.loading_controller.loading_elapsed_seconds
     }
     ToastManager {
         id: toast_manager

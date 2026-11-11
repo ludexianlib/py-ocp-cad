@@ -4,8 +4,9 @@ import QtQuick.Layouts
 
 Dialog {
     id: root
-    objectName: "model_loading_dialog"
+    objectName: "file_loading_dialog"
     property bool loading: false
+    property string heading_text: "正在加载文件"
     property string filename: ""
     property string stage_text: "正在读取文件…"
     property int elapsed_seconds: 0
@@ -36,7 +37,7 @@ Dialog {
     contentItem: ColumnLayout {
         spacing: 16
         Label {
-            text: "正在加载模型"
+            text: root.heading_text
             color: Theme.ink
             font.pixelSize: 20
             font.weight: Font.DemiBold
@@ -51,7 +52,7 @@ Dialog {
         }
         ProgressBar {
             id: progress_bar
-            objectName: "model_loading_progress"
+            objectName: "file_loading_progress"
             Layout.fillWidth: true
             Layout.topMargin: 4
             implicitHeight: 8
@@ -111,7 +112,7 @@ Dialog {
                 font.pixelSize: 11
             }
             Label {
-                objectName: "model_loading_elapsed"
+                objectName: "file_loading_elapsed"
                 text: "已耗时：" + root.elapsed_seconds + " 秒"
                 color: Theme.primary
                 font.pixelSize: 11

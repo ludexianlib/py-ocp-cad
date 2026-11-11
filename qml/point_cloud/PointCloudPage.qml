@@ -80,12 +80,11 @@ Item {
                             anchors.centerIn: parent
                             width: Math.min(380, parent.width - 48)
                             spacing: 12
-                            visible: root.cloud_controller.loading || !root.cloud_controller.has_cloud || Boolean(native_view.error_text)
-                            Label { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: root.cloud_controller.loading ? root.cloud_controller.stage_text : native_view.error_text ? "点云预览失败" : "导入你的第一份点云"; color: Theme.ink; font.pixelSize: 18; font.weight: Font.DemiBold; wrapMode: Text.Wrap }
+                            visible: !root.cloud_controller.has_cloud || Boolean(native_view.error_text)
+                            Label { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: native_view.error_text ? "点云预览失败" : "导入你的第一份点云"; color: Theme.ink; font.pixelSize: 18; font.weight: Font.DemiBold; wrapMode: Text.Wrap }
                             Label { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: native_view.error_text || "支持 PLY、PCD、XYZ 格式"; color: Theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
-                            BusyIndicator { anchors.horizontalCenter: parent.horizontalCenter; running: root.cloud_controller.loading; visible: running; palette.dark: Theme.primary }
                         }
-                        Label { anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 14; text: "OPEN3D / POINT CLOUD"; color: "#8f86a6"; font.pixelSize: 9; font.letterSpacing: 1.5 }
+                        Label { anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 14; text: "POINT CLOUD"; color: "#8f86a6"; font.pixelSize: 9; font.letterSpacing: 1.5 }
                     }
                     Label { text: native_view.error_text ? "预览加载失败" : root.cloud_controller.loading ? root.cloud_controller.stage_text : root.cloud_controller.has_cloud ? "点云已同步 · " + Theme.format_number(root.cloud_controller.active_cloud.point_count, 0) + " 个点" : "等待导入点云"; color: native_view.error_text ? Theme.error : Theme.muted; font.pixelSize: 11 }
                 }

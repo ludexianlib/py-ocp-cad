@@ -15,7 +15,7 @@ from PyQt6.QtTest import QTest
 
 from app.point_cloud.controllers.point_cloud_controller import PointCloudController
 from app.point_cloud.models.point_cloud_io import read_point_cloud, validate_point_cloud_path
-from app.point_cloud.views.open3d_renderer import PointCloudCamera
+from app.point_cloud.views.point_cloud_camera import PointCloudCamera
 
 
 def write_cloud(path, count=3):
@@ -139,6 +139,13 @@ class PointCloudIoTests(unittest.TestCase):
             eye, target, up = camera.snapshot()
             self.assertTrue(np.isfinite([eye, target, up]).all())
             self.assertGreater(np.linalg.norm(eye - target), 0)
+            for aspect_ratio in (0.1, 1, 4):
+                matrix = camera.view_projection(aspect_ratio)
+                self.assertTrue(np.isfinite(matrix).all())
+                clip = matrix @ np.array([*target, 1])
+                np.testing.assert_allclose(clip[:2] / clip[3], [0, 0], atol=1e-10)
+                self.assertGreater(clip[3], 0)
+                self.assertLess(abs(clip[2] / clip[3]), 1)
 
 
 class PointCloudControllerTests(unittest.TestCase):
@@ -151,6 +158,45 @@ class PointCloudControllerTests(unittest.TestCase):
         while not predicate():
             self.assertLess(time.monotonic(), deadline, "Point cloud import timed out")
             QTest.qWait(10)
+
+    def test_loading_metadata_covers_preview_and_stops_on_completion_and_failure(self):
+        controller = PointCloudController()
+        try:
+            self.assertEqual(controller.loading_filename, "")
+            self.assertEqual(controller.loading_elapsed_seconds, 0)
+            with TemporaryDirectory() as directory:
+                source = write_cloud(Path(directory) / "彩色点云.ply")
+                previews = []
+                controller.preview_requested.connect(previews.append)
+                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source))))
+                self.assertEqual(controller.loading_filename, source.name)
+                self.assertEqual(controller.loading_elapsed_seconds, 0)
+                self.wait_until(lambda: previews and controller._task is None)
+                self.assertTrue(controller.loading)
+                self.assertEqual(controller.stage_text, "正在准备点云预览…")
+                self.wait_until(lambda: controller.loading_elapsed_seconds >= 1)
+                controller.report_preview(previews[0])
+                self.assertFalse(controller._loading_timer.isActive())
+                elapsed = controller.loading_elapsed_seconds
+                QTest.qWait(1100)
+                self.assertEqual(controller.loading_elapsed_seconds, elapsed)
+                previous = controller.current_record
+
+                malformed = Path(directory) / "broken.ply"
+                malformed.write_text("invalid")
+                with self.assertLogs("app.point_cloud.controllers.point_cloud_import_task", level="ERROR"):
+                    self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(malformed))))
+                    self.assertEqual(controller.loading_filename, malformed.name)
+                    self.assertEqual(controller.loading_elapsed_seconds, 0)
+                    self.wait_until(lambda: not controller.loading and controller._task is None)
+                self.assertIs(controller.current_record, previous)
+                self.assertFalse(controller._loading_timer.isActive())
+                elapsed = controller.loading_elapsed_seconds
+                QTest.qWait(1100)
+                self.assertEqual(controller.loading_elapsed_seconds, elapsed)
+        finally:
+            controller.stop()
+            controller.deleteLater()
 
     def test_import_failure_logs_cause_and_interpreter_and_reports_error(self):
         controller = PointCloudController()
@@ -301,6 +347,8 @@ raise SystemExit(main(sys.argv[1:]))
                 self.assertEqual(previews, [])
                 self.assertEqual(notices, [])
                 self.assertFalse(controller.has_cloud)
+                self.assertFalse(controller.loading)
+                self.assertFalse(controller._loading_timer.isActive())
         finally:
             controller.stop()
             controller.deleteLater()

@@ -119,14 +119,6 @@ Item {
         cad_controller: root.cad_controller
     }
 
-    LoadingDialog {
-        loading: root.active && root.cad_controller.loading
-        modal: false
-        filename: root.cad_controller.loading_filename
-        stage_text: root.cad_controller.loading_stage
-        elapsed_seconds: root.cad_controller.loading_elapsed_seconds
-    }
-
     FileDialog {
         id: import_dialog
         objectName: "step_import_dialog"
