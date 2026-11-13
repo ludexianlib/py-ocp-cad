@@ -16,6 +16,7 @@ from PyQt6.QtTest import QTest
 from app.point_cloud.controllers.point_cloud_controller import PointCloudController
 from app.point_cloud.models.point_cloud_io import read_point_cloud, validate_point_cloud_path
 from app.point_cloud.views.point_cloud_camera import PointCloudCamera
+from app.point_cloud.services.point_cloud_client import PointCloudClient
 
 
 def write_cloud(path, count=3):
@@ -28,6 +29,17 @@ def write_cloud(path, count=3):
 
 
 class PointCloudIoTests(unittest.TestCase):
+    def test_units_are_explicit_and_meters_are_converted_once(self):
+        with TemporaryDirectory() as directory:
+            source = write_cloud(Path(directory) / "source.ply")
+            millimeters = read_point_cloud(source, "mm")
+            meters = read_point_cloud(source, "m")
+            np.testing.assert_allclose(meters.points, millimeters.points * 1000)
+            self.assertEqual(meters.to_summary()["unit"], "mm")
+            self.assertEqual(meters.to_summary()["source_unit"], "m")
+            with self.assertRaises(ValueError):
+                read_point_cloud(source, "")
+
     def test_missing_open3d_reports_installation_guidance_and_original_error(self):
         error = ModuleNotFoundError("No module named 'open3d'", name="open3d")
         original_import = builtins.__import__
@@ -41,7 +53,7 @@ class PointCloudIoTests(unittest.TestCase):
             source = write_cloud(Path(directory) / "source.ply")
             with patch("builtins.__import__", side_effect=import_without_open3d):
                 with self.assertRaises(RuntimeError) as raised:
-                    read_point_cloud(source)
+                    read_point_cloud(source, "mm")
             self.assertIn("Open3D 未安装", str(raised.exception))
             self.assertIn("requirements.txt", str(raised.exception))
             self.assertIn(str(error), str(raised.exception))
@@ -65,7 +77,7 @@ class PointCloudIoTests(unittest.TestCase):
 
                     with patch("builtins.__import__", side_effect=import_broken_open3d):
                         with self.assertRaises(RuntimeError) as raised:
-                            read_point_cloud(source)
+                            read_point_cloud(source, "mm")
                     self.assertIn(expected_message, str(raised.exception))
                     self.assertIn(str(error), str(raised.exception))
                     self.assertNotIn("Open3D 未安装", str(raised.exception))
@@ -74,7 +86,7 @@ class PointCloudIoTests(unittest.TestCase):
     def test_colored_ply_preserves_coordinates_and_metadata(self):
         with TemporaryDirectory() as directory:
             source = write_cloud(Path(directory) / "彩色点云.PLY")
-            record = read_point_cloud(source)
+            record = read_point_cloud(source, "mm")
             self.assertEqual(record.name, "彩色点云")
             np.testing.assert_array_equal(record.points, [[0, 0, 0], [2, 0, 0], [0, 3, 4]])
             np.testing.assert_allclose(record.colors, np.eye(3))
@@ -88,7 +100,7 @@ class PointCloudIoTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             source = Path(directory) / "source.xyz"
             source.write_text("0 0 0\n1 2 0\nnan 1 0\ninf 0 0\n")
-            record = read_point_cloud(source)
+            record = read_point_cloud(source, "mm")
             self.assertEqual(len(record.points), 2)
             self.assertEqual(record.source_count, 4)
             self.assertEqual(record.to_summary()["removed_count"], 2)
@@ -99,7 +111,7 @@ class PointCloudIoTests(unittest.TestCase):
         import open3d as o3d
 
         with TemporaryDirectory() as directory:
-            record = read_point_cloud(write_cloud(Path(directory) / "source.ply"))
+            record = read_point_cloud(write_cloud(Path(directory) / "source.ply"), "mm")
             cloud = o3d.geometry.PointCloud()
             cloud.points = o3d.utility.Vector3dVector(record.points.copy())
             cloud.colors = o3d.utility.Vector3dVector(record.colors.astype(np.float64))
@@ -107,7 +119,7 @@ class PointCloudIoTests(unittest.TestCase):
                 with self.subTest(extension=extension):
                     path = Path(directory) / ("copy." + extension)
                     self.assertTrue(o3d.io.write_point_cloud(str(path), cloud, write_ascii=ascii_format))
-                    restored = read_point_cloud(path)
+                    restored = read_point_cloud(path, "mm")
                     np.testing.assert_allclose(restored.points, record.points)
                     np.testing.assert_allclose(restored.colors, record.colors)
 
@@ -120,7 +132,7 @@ class PointCloudIoTests(unittest.TestCase):
                     path = root / name
                     path.write_text(payload)
                     with self.assertRaises(ValueError):
-                        read_point_cloud(path)
+                        read_point_cloud(path, "mm")
             for source in (root / "missing.pcd", root / "source.txt", root / "folder.ply"):
                 if source.name == "folder.ply":
                     source.mkdir()
@@ -132,7 +144,7 @@ class PointCloudIoTests(unittest.TestCase):
             source = Path(directory) / "single.xyz"
             source.write_text("1000000 2000000 3000000\n")
             camera = PointCloudCamera()
-            camera.fit(read_point_cloud(source))
+            camera.fit(read_point_cloud(source, "mm"))
             camera.orbit(120, 900)
             camera.pan(20, -30, 400)
             camera.zoom(1200)
@@ -159,6 +171,43 @@ class PointCloudControllerTests(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, "Point cloud import timed out")
             QTest.qWait(10)
 
+    def test_stream_waits_for_preview_and_preserves_last_accepted_frame_on_failure(self):
+        controller = PointCloudController()
+        previews = []
+        controller.preview_requested.connect(previews.append)
+        try:
+            self.assertTrue(controller.start_stream("127.0.0.1", 0))
+            self.assertFalse(controller.import_cloud(QUrl.fromLocalFile("ignored.ply"), "mm"))
+            with PointCloudClient(port=controller.stream_status["port"]) as client:
+                points = np.array([[1.25, 2, 3]])
+                client.send_frame(points=points, unit="m", coordinate_frame="lidar")
+                self.wait_until(lambda: len(previews) == 1)
+                self.assertFalse(controller.has_cloud)
+                for _ in range(3):
+                    client.send_frame(points=points, unit="mm", coordinate_frame="lidar")
+                self.wait_until(lambda: controller.stream_status["received"] == 4)
+                self.assertEqual(len(previews), 1)
+                first = previews[0]
+                controller.report_preview(first)
+                self.assertIs(controller.current_record, first)
+                np.testing.assert_array_equal(first.points, points * 1000)
+                self.wait_until(lambda: len(previews) == 2)
+                self.assertEqual(previews[1].sequence, 3)
+                controller.report_preview(previews[1], "test GPU failure")
+                self.assertIs(controller.current_record, first)
+                self.assertEqual(controller.last_error, "test GPU failure")
+                client.send_frame(points=np.empty((0, 3)), unit="mm", coordinate_frame="lidar")
+                self.wait_until(lambda: len(previews) == 3)
+                controller.report_preview(previews[2])
+                self.assertFalse(controller.has_cloud)
+                self.assertEqual(controller.active_cloud["point_count"], 0)
+            controller.stop_stream()
+            self.assertEqual(controller.active_cloud["point_count"], 0)
+            self.assertFalse(controller.stream_running)
+        finally:
+            controller.stop()
+            controller.deleteLater()
+
     def test_loading_metadata_covers_preview_and_stops_on_completion_and_failure(self):
         controller = PointCloudController()
         try:
@@ -168,7 +217,7 @@ class PointCloudControllerTests(unittest.TestCase):
                 source = write_cloud(Path(directory) / "彩色点云.ply")
                 previews = []
                 controller.preview_requested.connect(previews.append)
-                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source))))
+                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm"))
                 self.assertEqual(controller.loading_filename, source.name)
                 self.assertEqual(controller.loading_elapsed_seconds, 0)
                 self.wait_until(lambda: previews and controller._task is None)
@@ -185,7 +234,7 @@ class PointCloudControllerTests(unittest.TestCase):
                 malformed = Path(directory) / "broken.ply"
                 malformed.write_text("invalid")
                 with self.assertLogs("app.point_cloud.controllers.point_cloud_import_task", level="ERROR"):
-                    self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(malformed))))
+                    self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(malformed)), "mm"))
                     self.assertEqual(controller.loading_filename, malformed.name)
                     self.assertEqual(controller.loading_elapsed_seconds, 0)
                     self.wait_until(lambda: not controller.loading and controller._task is None)
@@ -217,7 +266,7 @@ raise SystemExit(main(sys.argv[1:]))
 """
 
         def start_broken_reader(command, **options):
-            process = original_popen([sys.executable, "-X", "utf8", "-u", "-c", script, *command[-2:]], **options)
+            process = original_popen([sys.executable, "-X", "utf8", "-u", "-c", script, *command[6:]], **options)
             processes.append((process, Path(command[-1])))
             return process
 
@@ -228,7 +277,7 @@ raise SystemExit(main(sys.argv[1:]))
                 controller.notice_requested.connect(lambda message, failed: notices.append((message, failed)))
                 with self.assertLogs("app.point_cloud.controllers.point_cloud_import_task", level="ERROR") as logs:
                     with patch("app.point_cloud.controllers.point_cloud_import_task.subprocess.Popen", side_effect=start_broken_reader):
-                        self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source))))
+                        self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm"))
                         self.wait_until(lambda: not controller.loading and controller._task is None)
                 self.assertFalse(controller.has_cloud)
                 self.assertIn("Open3D 加载失败", controller.last_error)
@@ -259,7 +308,7 @@ raise SystemExit(main(sys.argv[1:]))
                 for source in (colored, filtered):
                     with self.subTest(source=source.name):
                         count = len(previews)
-                        self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source))))
+                        self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm"))
                         self.wait_until(lambda: len(previews) > count and controller._task is None)
                         record = previews[-1]
                         self.assertEqual(record.name, source.stem)
@@ -297,13 +346,13 @@ raise SystemExit(main(sys.argv[1:]))
                 source = write_cloud(Path(directory) / "source.ply")
                 previews = []
                 controller.preview_requested.connect(previews.append)
-                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source))))
+                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm"))
                 self.wait_until(lambda: previews and controller._task is None)
                 controller.report_preview(previews[0])
                 previous = controller.current_record
                 with self.assertLogs("app.point_cloud.controllers.point_cloud_import_task", level="ERROR"):
                     with patch("app.point_cloud.controllers.point_cloud_import_task.subprocess.Popen", side_effect=start_crashing_reader):
-                        self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source))))
+                        self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm"))
                         self.wait_until(lambda: not controller.loading and controller._task is None)
                 self.assertIn("异常退出", controller.last_error)
                 self.assertIn("17", controller.last_error)
@@ -334,7 +383,7 @@ raise SystemExit(main(sys.argv[1:]))
                 controller.preview_requested.connect(previews.append)
                 controller.notice_requested.connect(lambda message, failed: notices.append((message, failed)))
                 with patch("app.point_cloud.controllers.point_cloud_import_task.subprocess.Popen", side_effect=start_slow_reader):
-                    self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source))))
+                    self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm"))
                     self.wait_until(lambda: processes and (processes[0][1] / "started").exists())
                     task = controller._task
                     started = time.monotonic()
@@ -360,7 +409,7 @@ raise SystemExit(main(sys.argv[1:]))
                 source = write_cloud(Path(directory) / "source.ply")
                 previews = []
                 controller.preview_requested.connect(previews.append)
-                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source))))
+                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm"))
                 self.wait_until(lambda: len(previews) == 1 and controller._task is None)
                 self.assertTrue(controller.loading)
                 self.assertFalse(controller.has_cloud)
@@ -369,7 +418,7 @@ raise SystemExit(main(sys.argv[1:]))
                 self.assertTrue(controller.has_cloud)
                 previous = controller.current_record
 
-                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source))))
+                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm"))
                 self.wait_until(lambda: len(previews) == 2 and controller._task is None)
                 self.assertIs(controller.current_record, previous)
                 controller.report_preview(previews[1], "render failure")
@@ -381,10 +430,10 @@ raise SystemExit(main(sys.argv[1:]))
 
                 malformed = Path(directory) / "broken.ply"
                 malformed.write_text("invalid")
-                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(malformed))))
+                self.assertTrue(controller.import_cloud(QUrl.fromLocalFile(str(malformed)), "mm"))
                 self.wait_until(lambda: not controller.loading and controller._task is None)
                 self.assertIs(controller.current_record, previous)
-                self.assertFalse(controller.import_cloud(QUrl("https://example.com/points.ply")))
+                self.assertFalse(controller.import_cloud(QUrl("https://example.com/points.ply"), "mm"))
                 self.assertIs(controller.current_record, previous)
         finally:
             controller.stop()

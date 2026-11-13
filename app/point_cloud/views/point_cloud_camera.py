@@ -12,12 +12,23 @@ class PointCloudCamera:
         self.center = np.zeros(3)
         self.radius = 1.0
         self.distance = 3.0
+        self.origin = np.zeros(3)
+        self._bounds = None
 
-    def fit(self, record):
+    def fit(self, record, origin=None):
+        if not len(record.points):
+            return
         minimum, maximum = record.bounds
+        midpoint = minimum / 2 + maximum / 2
+        self.origin = midpoint.copy() if origin is None else np.array(origin, dtype=np.float64, copy=True)
         self.radius = max(float(np.linalg.norm(maximum - minimum)) / 2, 1e-6)
         self.distance = self.radius * 2.6
-        self.center = np.zeros(3)
+        self.center = midpoint - self.origin
+        self.update_bounds(record)
+
+    def update_bounds(self, record):
+        if len(record.points):
+            self._bounds = tuple(value - self.origin for value in record.bounds)
 
     def orbit(self, delta_x, delta_y):
         self.yaw -= delta_x * 0.008
@@ -56,7 +67,10 @@ class PointCloudCamera:
         view[:3, :3] = (right, np.cross(right, forward), -forward)
         view[:3, 3] = -view[:3, :3] @ eye
         near = max(self.distance * 1e-4, self.radius * 1e-6)
-        far = max(self.distance + 4 * self.radius, near * 1000)
+        extent = self.radius
+        if self._bounds is not None:
+            extent = max(float(np.linalg.norm(value - self.center)) for value in self._bounds)
+        far = max(self.distance + 4 * extent, near * 1000)
         scale = 1 / math.tan(math.radians(30))
         projection = np.zeros((4, 4))
         projection[0, 0] = scale / max(aspect_ratio, 1e-6)

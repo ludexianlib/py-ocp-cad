@@ -19,6 +19,8 @@ def save_prepared_cloud(record, directory):
         "source_path": record.source_path,
         "source_count": record.source_count,
         "has_colors": record.colors is not None,
+        "unit": record.unit,
+        "source_unit": record.source_unit,
     }
     (directory / "cloud.json").write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
 
@@ -32,7 +34,8 @@ def load_prepared_cloud(directory):
     points.flags.writeable = False
     if colors is not None:
         colors.flags.writeable = False
-    return PointCloudRecord(metadata["name"], metadata["source_path"], points, colors, metadata["source_count"])
+    return PointCloudRecord(metadata["name"], metadata["source_path"], points, colors, metadata["source_count"],
+                            unit=metadata["unit"], source_unit=metadata["source_unit"])
 
 
 def main(argv=None):
@@ -41,12 +44,13 @@ def main(argv=None):
     import traceback
 
     parser = argparse.ArgumentParser(description="Isolated point cloud reader")
+    parser.add_argument("--unit", required=True, choices=("mm", "m"))
     parser.add_argument("source", type=Path)
     parser.add_argument("directory", type=Path)
     options = parser.parse_args(argv)
     faulthandler.enable()
     try:
-        record = read_point_cloud(options.source)
+        record = read_point_cloud(options.source, options.unit)
         save_prepared_cloud(record, options.directory)
     except Exception as error:
         traceback.print_exc()

@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from app.point_cloud.models.point_cloud_model import PointCloudRecord
+from app.point_cloud.models.point_cloud_frame import unit_scale
 
 
 def validate_point_cloud_path(source):
@@ -18,8 +19,9 @@ def validate_point_cloud_path(source):
     return path
 
 
-def read_point_cloud(source):
+def read_point_cloud(source, unit):
     path = validate_point_cloud_path(source)
+    scale = unit_scale(unit)
     try:
         import open3d as o3d
     except ModuleNotFoundError as error:
@@ -36,6 +38,8 @@ def read_point_cloud(source):
     if coordinates.ndim != 2 or coordinates.shape[1] != 3 or not len(coordinates):
         raise ValueError("文件中没有可读取的点云坐标。")
     source_count = len(coordinates)
+    with np.errstate(over="ignore", invalid="ignore"):
+        coordinates = coordinates * scale
     valid = np.isfinite(coordinates).all(axis=1)
     if not valid.any():
         raise ValueError("点云中没有有效的有限坐标。")
@@ -47,4 +51,4 @@ def read_point_cloud(source):
             colors = np.clip(candidate, 0, 1).astype(np.float32)
             colors.flags.writeable = False
     points.flags.writeable = False
-    return PointCloudRecord(path.stem, str(path), points, colors, source_count)
+    return PointCloudRecord(path.stem, str(path), points, colors, source_count, source_unit=unit)

@@ -1,10 +1,13 @@
 """QML input adapter for a point cloud drawn directly into a Qt OpenGL FBO."""
 
+import copy
+
 from PyQt6.QtCore import QCoreApplication, QObject, Qt, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtQuick import QQuickFramebufferObject
 
 from app.point_cloud.views.point_cloud_camera import PointCloudCamera
 from app.point_cloud.views.point_cloud_renderer import PointCloudRenderer
+from app.point_cloud.models.point_cloud_frame import PointCloudFrame
 
 
 class PointCloudViewport(QQuickFramebufferObject):
@@ -19,6 +22,10 @@ class PointCloudViewport(QQuickFramebufferObject):
         self._active = False
         self._record = None
         self._camera = PointCloudCamera()
+        self._stream_session = None
+        self._stream_has_points = False
+        self._rollback_camera = None
+        self._rollback_stream_state = (None, False)
         self._render_ready = False
         self._error_text = ""
         self._serial = 0
@@ -74,8 +81,23 @@ class PointCloudViewport(QQuickFramebufferObject):
         return self._render_ready
 
     def _preview(self, record):
+        self._rollback_camera = copy.deepcopy(self._camera)
+        self._rollback_stream_state = (self._stream_session, self._stream_has_points)
         self._record = record
-        self._camera.fit(record)
+        if isinstance(record, PointCloudFrame):
+            session = self._controller.stream_session
+            if session != self._stream_session:
+                self._stream_session = session
+                self._stream_has_points = False
+            if len(record.points) and not self._stream_has_points:
+                self._camera.fit(record)
+                self._stream_has_points = True
+            else:
+                self._camera.update_bounds(record)
+        else:
+            self._stream_session = None
+            self._stream_has_points = False
+            self._camera.fit(record)
         self._render_ready = False
         self._error_text = ""
         self.render_state_changed.emit()
@@ -101,8 +123,12 @@ class PointCloudViewport(QQuickFramebufferObject):
             self._controller.report_preview(record, error_text)
             previous_record = self._controller.current_record
             self._record = previous_record
+            if previous_record is not record and self._rollback_camera is not None:
+                self._camera = self._rollback_camera
+                self._stream_session, self._stream_has_points = self._rollback_stream_state
             if previous_record is not None and previous_record is not record:
-                self._camera.fit(previous_record)
+                if isinstance(previous_record, PointCloudFrame):
+                    self._camera.update_bounds(previous_record)
                 self._schedule_frame()
             elif previous_record is None:
                 self.update()
@@ -119,12 +145,16 @@ class PointCloudViewport(QQuickFramebufferObject):
     @pyqtSlot()
     def fit_view(self):
         if self._record is not None:
-            self._camera.fit(self._record)
+            origin = self._camera.origin if isinstance(self._record, PointCloudFrame) else None
+            self._camera.fit(self._record, origin)
             self._schedule_frame()
 
     @pyqtSlot()
     def reset_camera(self):
+        origin = self._camera.origin.copy()
         self._camera = PointCloudCamera()
+        if isinstance(self._record, PointCloudFrame):
+            self._camera.origin = origin
         self.fit_view()
 
     def mousePressEvent(self, event):

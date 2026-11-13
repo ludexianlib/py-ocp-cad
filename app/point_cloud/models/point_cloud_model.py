@@ -12,6 +12,8 @@ class PointCloudRecord:
     points: np.ndarray = field(repr=False)
     colors: np.ndarray | None = field(default=None, repr=False)
     source_count: int = 0
+    unit: str = "mm"
+    source_unit: str = "mm"
     bounds: tuple = field(init=False, repr=False)
 
     def __post_init__(self):
@@ -27,6 +29,9 @@ class PointCloudRecord:
             "point_count": len(self.points),
             "removed_count": self.source_count - len(self.points),
             "has_colors": self.colors is not None,
+            "has_intensity": False,
+            "unit": self.unit,
+            "source_unit": self.source_unit,
             "dimensions": (maximum - minimum).tolist(),
             "minimum": minimum.tolist(),
             "maximum": maximum.tolist(),

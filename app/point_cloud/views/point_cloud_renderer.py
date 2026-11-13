@@ -12,18 +12,26 @@ from PyQt6.QtGui import QMatrix4x4, QOpenGLContext
 from PyQt6.QtOpenGL import QOpenGLBuffer, QOpenGLFunctions_4_1_Core, QOpenGLShader, QOpenGLShaderProgram, QOpenGLVertexArrayObject
 from PyQt6.QtQuick import QQuickFramebufferObject
 
+from app.point_cloud.models.point_cloud_frame import PointCloudFrame
+
 
 _VERTEX_SHADER = """#version 410 core
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 color;
+layout(location = 2) in float intensity;
 uniform mat4 view_projection;
 uniform float point_size;
-uniform bool use_rgb;
+uniform int color_mode;
+uniform float height_min;
+uniform float height_span;
 out vec3 point_color;
 void main() {
     gl_Position = view_projection * vec4(position, 1.0);
     gl_PointSize = point_size;
-    point_color = use_rgb ? color : vec3(0.40, 0.30, 0.80);
+    float scalar = color_mode == 2 ? (position.z - height_min) / height_span : intensity;
+    float t = clamp(scalar, 0.0, 1.0);
+    vec3 gradient = mix(vec3(0.15, 0.30, 0.85), vec3(1.0, 0.75, 0.10), t);
+    point_color = color_mode == 1 ? color : color_mode >= 2 ? gradient : vec3(0.40, 0.30, 0.80);
 }
 """
 _FRAGMENT_SHADER = """#version 410 core
@@ -59,6 +67,10 @@ class PointCloudRenderer(QQuickFramebufferObject.Renderer):
         self._point_size = 3.0
         self._max_point_size = 1.0
         self._use_rgb = True
+        self._color_mode = "rgb"
+        self._origin = np.zeros(3)
+        self._uploaded_origin = None
+        self._capacity = 0
         self._failed = False
 
     def synchronize(self, item):
@@ -79,10 +91,12 @@ class PointCloudRenderer(QQuickFramebufferObject.Renderer):
         self._serial, self._record = item._serial, item._record
         self._active = item._active and not item._stopped
         self._matrix = item._camera.view_projection(item.width() / max(item.height(), 1))
+        self._origin = item._camera.origin.copy()
         if item._controller is not None:
             ratio = window.devicePixelRatio() if window is not None else 1
             self._point_size = item._controller.point_size * ratio
             self._use_rgb = item._controller.use_rgb
+            self._color_mode = item._controller.color_mode
 
     # Use Qt's default FBO factory, avoiding the PyQt6 6.7.1 cross-module FBO
     # conversion crash also worked around by the OCCT renderer.
@@ -137,10 +151,34 @@ class PointCloudRenderer(QQuickFramebufferObject.Renderer):
     def _upload_cloud(self, record):
         # Center in float64 before converting to GPU float32 to retain small
         # coordinate differences in survey data with large world offsets.
-        vertices = np.empty((len(record.points), 6), dtype=np.float32)
-        minimum, maximum = record.bounds
-        vertices[:, :3] = record.points - (minimum / 2 + maximum / 2)
-        vertices[:, 3:] = record.colors if record.colors is not None else 0
+        vertices = np.empty((len(record.points), 7), dtype=np.float32)
+        vertices[:, :3] = record.points - self._origin
+        vertices[:, 3:6] = record.colors if record.colors is not None else 0
+        vertices[:, 6] = 0
+        if getattr(record, "intensity", None) is not None:
+            low, high = record.intensity_range
+            # Normalize in float64 before upload; preserve the sender's fixed range.
+            vertices[:, 6] = (np.clip(record.intensity, low, high) - low) / (high - low)
+        if (isinstance(record, PointCloudFrame) and isinstance(self._uploaded_record, PointCloudFrame)
+                and self._buffer is not None and vertices.nbytes <= self._capacity):
+            try:
+                if not self._buffer.bind():
+                    raise RuntimeError("无法绑定点云 GPU 缓冲区。")
+                if vertices.nbytes:
+                    self._buffer.write(0, sip.voidptr(vertices.ctypes.data), vertices.nbytes)
+                error = self._functions.glGetError()
+                if error:
+                    # Force a full restore of the last acknowledged frame.
+                    self._uploaded_record = None
+                    raise RuntimeError(f"点云 GPU 数据更新失败（OpenGL 错误 {error:#x}）。")
+            except Exception:
+                self._uploaded_record = None
+                raise
+            finally:
+                self._buffer.release()
+            self._uploaded_record = record
+            self._uploaded_origin = self._origin.copy()
+            return
         buffer = QOpenGLBuffer(QOpenGLBuffer.Type.VertexBuffer)
         vertex_array = QOpenGLVertexArrayObject()
         try:
@@ -149,14 +187,22 @@ class PointCloudRenderer(QQuickFramebufferObject.Renderer):
             vertex_array.bind()
             if not buffer.bind():
                 raise RuntimeError("无法绑定点云 GPU 缓冲区。")
-            buffer.setUsagePattern(QOpenGLBuffer.UsagePattern.StaticDraw)
-            buffer.allocate(sip.voidptr(vertices.ctypes.data), vertices.nbytes)
+            dynamic = isinstance(record, PointCloudFrame)
+            buffer.setUsagePattern(QOpenGLBuffer.UsagePattern.DynamicDraw if dynamic else QOpenGLBuffer.UsagePattern.StaticDraw)
+            capacity = max(vertices.nbytes, 28)
+            if dynamic:
+                capacity = 1 << (capacity - 1).bit_length()
+            buffer.allocate(capacity)
+            if vertices.nbytes:
+                buffer.write(0, sip.voidptr(vertices.ctypes.data), vertices.nbytes)
             self._program.enableAttributeArray(0)
-            self._program.setAttributeBuffer(0, 0x1406, 0, 3, 24)  # GL_FLOAT
+            self._program.setAttributeBuffer(0, 0x1406, 0, 3, 28)  # GL_FLOAT
             self._program.enableAttributeArray(1)
-            self._program.setAttributeBuffer(1, 0x1406, 12, 3, 24)
+            self._program.setAttributeBuffer(1, 0x1406, 12, 3, 28)
+            self._program.enableAttributeArray(2)
+            self._program.setAttributeBuffer(2, 0x1406, 24, 1, 28)
             error = self._functions.glGetError()
-            if error or buffer.size() != vertices.nbytes:
+            if error or buffer.size() != capacity:
                 raise RuntimeError(f"点云 GPU 数据上传失败（OpenGL 错误 {error:#x}）。")
         except Exception:
             vertex_array.destroy()
@@ -171,6 +217,8 @@ class PointCloudRenderer(QQuickFramebufferObject.Renderer):
             self._vertex_array.destroy()
             self._buffer.destroy()
         self._buffer, self._vertex_array, self._uploaded_record = buffer, vertex_array, record
+        self._capacity = capacity
+        self._uploaded_origin = self._origin.copy()
 
     def _reset_gl_state(self):
         functions = self._functions
@@ -220,12 +268,18 @@ class PointCloudRenderer(QQuickFramebufferObject.Renderer):
                 self._initialize_program()
             if not self._program.bind():
                 raise RuntimeError("无法启用点云着色器。")
-            if self._record is not self._uploaded_record:
+            if self._record is not self._uploaded_record or not np.array_equal(self._origin, self._uploaded_origin):
                 self._upload_cloud(self._record)
             self._vertex_array.bind()
             self._program.setUniformValue("view_projection", QMatrix4x4(*self._matrix.ravel().tolist()))
             self._program.setUniformValue("point_size", float(min(self._point_size, self._max_point_size)))
-            self._program.setUniformValue("use_rgb", int(self._use_rgb and self._record.colors is not None))
+            mode = {"uniform": 0, "rgb": 1, "height": 2, "intensity": 3}[self._color_mode]
+            if (mode == 1 and self._record.colors is None) or (mode == 3 and getattr(self._record, "intensity", None) is None):
+                mode = 0
+            self._program.setUniformValue("color_mode", mode)
+            minimum, maximum = self._record.bounds
+            self._program.setUniformValue("height_min", float(minimum[2] - self._origin[2]))
+            self._program.setUniformValue("height_span", float(max(maximum[2] - minimum[2], 1e-6)))
             functions.glEnable(0x0B71)  # GL_DEPTH_TEST
             functions.glEnable(0x8642)  # GL_PROGRAM_POINT_SIZE
             functions.glDrawArrays(0x0000, 0, len(self._record.points))  # GL_POINTS
@@ -267,6 +321,8 @@ class PointCloudRenderer(QQuickFramebufferObject.Renderer):
         self._depth_buffer, self._depth_size = 0, None
         self._quick_window = self._release_callback = self._functions = None
         self._uploaded_record = self._notified = None
+        self._uploaded_origin = None
+        self._capacity = 0
         self._failed = False
 
     def __del__(self):

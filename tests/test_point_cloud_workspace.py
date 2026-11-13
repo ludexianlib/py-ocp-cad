@@ -114,10 +114,12 @@ def render_check():
     original_upload = PointCloudRenderer._upload_cloud
     original_release = PointCloudRenderer._release_resources
     uploads, uploaded_renderers, released_renderers = [], set(), set()
+    upload_buffers = []
 
     def record_upload(renderer, record):
         original_upload(renderer, record)
         uploads.append(record)
+        upload_buffers.append(renderer._buffer.bufferId())
         uploaded_renderers.add(id(renderer))
 
     def record_release(renderer):
@@ -156,7 +158,7 @@ def render_check():
         wait_until(lambda: window.property("active_page") == "point_cloud")
         # Hold the first frame to verify the dialog covers both reading and preview.
         viewport.setProperty("active", False)
-        assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(source)))
+        assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm")
         mark("import_started")
         wait_until(lambda: loading_dialog.property("opened"))
         assert loading_dialog.property("heading_text") == "正在加载点云"
@@ -206,7 +208,9 @@ def render_check():
         wait_for_frame(lambda: setattr(cloud_controller, "use_rgb", False))
         assert grab_cloud_frame() != first_frame
         wait_for_frame(lambda: setattr(cloud_controller, "use_rgb", True))
-        assert grab_cloud_frame() == first_frame
+        # Compare the rendered cloud, excluding the QML overlay label whose
+        # antialiasing can vary by one channel value between desktop captures.
+        assert grab_cloud_frame().copy(center) == first_frame.copy(center)
         assert len(uploads) == 1, "Display settings must reuse the uploaded vertex buffer"
         mark("colors_checked")
 
@@ -222,13 +226,13 @@ def render_check():
             " ".join(str(value) for value in -direction) + " 255 0 0\n",
             encoding="utf-8",
         )
-        assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(depth_source)))
+        assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(depth_source)), "mm")
         wait_until(lambda: not cloud_controller.loading and cloud_controller._task is None)
         wait_until(lambda: not loading_dialog.property("visible"))
         depth_frame = grab_cloud_frame()
         pixel = depth_frame.pixelColor(depth_frame.width() // 2, depth_frame.height() // 2)
         assert pixel.green() > 200 and pixel.red() < 60, (pixel.getRgb(), cloud_controller.last_error)
-        assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(source)))
+        assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm")
         wait_until(lambda: not cloud_controller.loading and cloud_controller._task is None)
         wait_until(lambda: not loading_dialog.property("visible"))
         assert cloud_controller.active_cloud["point_count"] == len(points)
@@ -296,7 +300,7 @@ def render_check():
             record_upload(renderer, record)
 
         with patch.object(PointCloudRenderer, "_upload_cloud", new=fail_new_upload):
-            assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(source)))
+            assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm")
             wait_until(lambda: not cloud_controller.loading and cloud_controller._task is None)
             wait_until(lambda: viewport.render_ready and not loading_dialog.property("visible"))
         assert "测试 GPU 上传失败" in cloud_controller.last_error
@@ -314,7 +318,7 @@ def render_check():
         # Reading an invalid file must preserve the displayed point cloud.
         bad = output / "invalid-cloud.ply"
         bad.write_text("invalid")
-        assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(bad)))
+        assert cloud_controller.import_cloud(QUrl.fromLocalFile(str(bad)), "mm")
         assert loading_dialog.property("loading") and loading_dialog.property("visible")
         wait_until(lambda: not cloud_controller.loading and cloud_controller._task is None)
         wait_until(lambda: not loading_dialog.property("visible"))
@@ -347,6 +351,85 @@ def render_check():
         assert not cad_controller.last_error
         assert cloud_controller.current_record is cloud_record
         mark("shared_loading_dialog_checked")
+
+        # Exercise the full network -> controller -> OpenGL route without a lidar.
+        from app.point_cloud.services.point_cloud_client import PointCloudClient
+
+        window.setProperty("active_page", "point_cloud")
+        wait_until(lambda: viewport.active)
+        assert cloud_controller.start_stream("127.0.0.1", 0)
+        assert not cloud_controller.import_cloud(QUrl.fromLocalFile(str(source)), "mm")
+        port = cloud_controller.stream_status["port"]
+        with PointCloudClient(port=port, stream_id="render_test") as client:
+            def send_and_wait(**options):
+                before = cloud_controller.current_record
+                client.send_frame(unit="mm", coordinate_frame="lidar", **options)
+                wait_until(lambda: cloud_controller.current_record is not before and cloud_controller._pending_record is None)
+                assert viewport.render_ready and not viewport.error_text
+
+            # A large world offset checks local-origin precision as well as units.
+            world_points = points + np.array([1e9, 2e9, 3e9])
+            send_and_wait(points=world_points)
+            stream_buffer = upload_buffers[-1]
+            origin = viewport._camera.origin.copy()
+            initial_distance = viewport._camera.distance
+            camera_center = viewport._camera.center.copy()
+            send_and_wait(points=world_points + [1, 0, 0], colors=colors.astype(np.uint8))
+            assert upload_buffers[-1] == stream_buffer, "Continuous scans must reuse GPU storage"
+            np.testing.assert_array_equal(viewport._camera.origin, origin)
+            np.testing.assert_array_equal(viewport._camera.center, camera_center)
+            assert viewport._camera.distance == initial_distance
+            wait_for_frame(lambda: setattr(cloud_controller, "color_mode", "height"))
+            height_image = grab_cloud_frame()
+            intensity = np.linspace(0, 255, len(points))
+            send_and_wait(points=world_points, intensity=intensity, intensity_range=(0, 255))
+            assert upload_buffers[-1] == stream_buffer
+            wait_for_frame(lambda: setattr(cloud_controller, "color_mode", "intensity"))
+            assert grab_cloud_frame() != height_image
+
+            # Empty scans clear geometry without moving the camera.
+            send_and_wait(points=np.empty((0, 3)))
+            assert not cloud_controller.has_cloud
+            assert cloud_controller.active_cloud["point_count"] == 0
+            np.testing.assert_array_equal(viewport._camera.origin, origin)
+            assert viewport._camera.distance == initial_distance
+            send_and_wait(points=world_points, colors=colors.astype(np.uint8))
+            assert cloud_controller.has_cloud
+
+            accepted = cloud_controller.current_record
+            before_stream_failure = grab_cloud_frame()
+            camera_before_failure = viewport._camera.snapshot()
+
+            def fail_after_stream_write(renderer, record):
+                record_upload(renderer, record)
+                if record is not accepted:
+                    raise RuntimeError("测试实时 GPU 更新失败")
+
+            with patch.object(PointCloudRenderer, "_upload_cloud", new=fail_after_stream_write):
+                client.send_frame(points=world_points + [5, 0, 0], unit="mm", coordinate_frame="lidar")
+                wait_until(lambda: "测试实时 GPU 更新失败" in cloud_controller.last_error
+                           and viewport.render_ready and cloud_controller._pending_record is None)
+            assert cloud_controller.current_record is accepted
+            np.testing.assert_array_equal(viewport._camera.snapshot(), camera_before_failure)
+            failure_center = QRect(before_stream_failure.width() // 4, before_stream_failure.height() // 4,
+                                   before_stream_failure.width() // 2, before_stream_failure.height() // 2)
+            assert grab_cloud_frame().copy(failure_center) == before_stream_failure.copy(failure_center)
+
+            # A new frame with meter coordinates must retain the same mm bounds.
+            before = cloud_controller.current_record
+            client.send_frame(points=world_points / 1000, unit="m", coordinate_frame="lidar")
+            wait_until(lambda: cloud_controller.current_record is not before and cloud_controller._pending_record is None)
+            np.testing.assert_allclose(cloud_controller.current_record.points, world_points)
+            np.testing.assert_array_equal(viewport._camera.origin, origin)
+            wait_for_frame(viewport.reset_camera)
+            np.testing.assert_array_equal(viewport._camera.origin, origin)
+            wait_for_frame(lambda: setattr(cloud_controller, "color_mode", "height"))
+            assert window.grabWindow().save(str(output / "point-cloud-live-preview.png"))
+            final_record = cloud_controller.current_record
+        cloud_controller.stop_stream()
+        assert cloud_controller.current_record is final_record
+        assert not cloud_controller.stream_running
+        mark("live_stream_checked")
         assert not messages, messages
         mark("checks_passed")
         checks_passed = True

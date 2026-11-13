@@ -16,9 +16,10 @@ class PointCloudImportTask(QThread):
     loaded = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    def __init__(self, source, parent=None):
+    def __init__(self, source, parent=None, *, unit):
         super().__init__(parent)
         self._source = source
+        self._unit = unit
 
     def run(self):
         try:
@@ -26,7 +27,8 @@ class PointCloudImportTask(QThread):
                 return
             with TemporaryDirectory(prefix="point-cloud-") as directory:
                 command = [sys.executable, "-X", "utf8", "-u", "-m",
-                           "app.point_cloud.models.point_cloud_importer", str(self._source), directory]
+                           "app.point_cloud.models.point_cloud_importer", "--unit", self._unit,
+                           str(self._source), directory]
                 with subprocess.Popen(
                     command, cwd=Path(__file__).resolve().parents[3],
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
